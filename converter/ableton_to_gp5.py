@@ -11,6 +11,18 @@ from guitarpro import models as gp
 
 TICKS_PER_BEAT = gp.Duration.quarterTime  # 960
 
+DEFAULT_FRET_COUNT = 24
+MAX_FRET_COUNT = 127
+
+# Au-dessus de ce seuil, une piste "guitar" devient une piste notation seule.
+# Exemple : note MIDI 102 sur corde E aiguë 64 = frette 38.
+# Plutôt que créer une tab illisible, on bascule en notation seule.
+STANDARD_GUITAR_MAX_FRET_FOR_TAB = 36
+
+PIANO_MIDI_INSTRUMENT = 0
+GUITAR_MIDI_INSTRUMENT = 25
+BASS_MIDI_INSTRUMENT = 33
+
 ALLOWED_DURATIONS = [
     gp.Duration.quarterTime * 4,       # ronde
     gp.Duration.quarterTime * 3,       # blanche pointée
@@ -137,6 +149,172 @@ def clamp_velocity(value: Any) -> int:
     return max(1, min(127, velocity))
 
 
+def infer_default_tuning(track_kind: str) -> list[int]:
+    if track_kind.lower() == "bass":
+        return [28, 33, 38, 43]  # E1 A1 D2 G2
+
+    return [40, 45, 50, 55, 59, 64]  # E2 A2 D3 G3 B3 E4
+
+
+def normalize_tuning(raw_tuning: Any, track_kind: str) -> tuple[list[int], bool]:
+    if not isinstance(raw_tuning, list) or not raw_tuning:
+        return infer_default_tuning(track_kind), True
+
+    tuning: list[int] = []
+
+    for value in raw_tuning:
+        try:
+            tuning.append(int(value))
+        except Exception:
+            continue
+
+    if not tuning:
+        return infer_default_tuning(track_kind), True
+
+    return tuning, False
+
+
+def get_track_pitches(source_notes: list[Any]) -> list[int]:
+    pitches: list[int] = []
+
+    for note in source_notes:
+        if not isinstance(note, dict):
+            continue
+
+        try:
+            pitches.append(int(note["pitch"]))
+        except Exception:
+            continue
+
+    return pitches
+
+
+def should_use_notation_only_track(
+    track_kind: str,
+    tuning_low_to_high: list[int],
+    source_notes: list[Any],
+) -> tuple[bool, str | None]:
+    # Les basses restent en tab basse, sauf si tu décides plus tard de changer ce comportement.
+    if track_kind.lower() == "bass":
+        return False, None
+
+    pitches = get_track_pitches(source_notes)
+
+    if not pitches:
+        return False, None
+
+    min_pitch = min(pitches)
+    max_pitch = max(pitches)
+
+    min_string = min(tuning_low_to_high)
+    max_string = max(tuning_low_to_high)
+
+    if min_pitch < min_string:
+        return True, (
+            f"lowest note MIDI {min_pitch} is below lowest string MIDI {min_string}"
+        )
+
+    required_fret = max_pitch - max_string
+
+    if required_fret > STANDARD_GUITAR_MAX_FRET_FOR_TAB:
+        return True, (
+            f"highest note MIDI {max_pitch} requires fret {required_fret}, "
+            f"above notation-only threshold {STANDARD_GUITAR_MAX_FRET_FOR_TAB}"
+        )
+
+    return False, None
+
+
+def make_virtual_notation_tuning(source_notes: list[Any]) -> list[int]:
+    pitches = get_track_pitches(source_notes)
+
+    if not pitches:
+        return [40, 45, 50, 55, 59, 64]
+
+    min_pitch = min(pitches)
+    max_pitch = max(pitches)
+
+    # Si toute la piste tient dans 24 demi-tons, 7 cordes virtuelles identiques suffisent.
+    # Exemple : Theme 93–102 → tuning [93,93,...], frettes 0–9.
+    if max_pitch - min_pitch <= DEFAULT_FRET_COUNT:
+        return [min_pitch] * 7
+
+    # Sinon, on répartit 7 ancres pour couvrir la plage MIDI.
+    first_anchor = min_pitch
+    last_anchor = max(0, max_pitch - DEFAULT_FRET_COUNT)
+
+    tuning: list[int] = []
+
+    for index in range(7):
+        ratio = index / 6
+        anchor = round(first_anchor + (last_anchor - first_anchor) * ratio)
+        tuning.append(max(0, min(127, anchor)))
+
+    return sorted(tuning)
+
+
+def compute_fret_count(
+    tuning_low_to_high: list[int],
+    source_notes: list[Any],
+    track_report: dict[str, Any],
+) -> int:
+    pitches = get_track_pitches(source_notes)
+
+    if not pitches:
+        track_report["fretCount"] = DEFAULT_FRET_COUNT
+        return DEFAULT_FRET_COUNT
+
+    required_fret_count = DEFAULT_FRET_COUNT
+    impossible_low_pitches: dict[str, int] = {}
+
+    for pitch in pitches:
+        possible_frets = [
+            pitch - string_pitch
+            for string_pitch in tuning_low_to_high
+            if pitch >= string_pitch
+        ]
+
+        if not possible_frets:
+            impossible_low_pitches.setdefault(str(pitch), 0)
+            impossible_low_pitches[str(pitch)] += 1
+            continue
+
+        required_fret_count = max(required_fret_count, min(possible_frets))
+
+    fret_count = min(required_fret_count, MAX_FRET_COUNT)
+
+    if fret_count > DEFAULT_FRET_COUNT:
+        track_report["warnings"].append(
+            f"Extended fret count to {fret_count} while keeping original tuning."
+        )
+
+    if required_fret_count > MAX_FRET_COUNT:
+        track_report["warnings"].append(
+            f"Some notes may still be too high. Required fret count: "
+            f"{required_fret_count}, max allowed: {MAX_FRET_COUNT}."
+        )
+
+    if impossible_low_pitches:
+        track_report["warnings"].append(
+            "Some notes are below the lowest string and may be skipped."
+        )
+        track_report["impossibleLowPitches"] = impossible_low_pitches
+
+    track_report["fretCount"] = fret_count
+    return fret_count
+
+
+def make_gp_strings(tuning_low_to_high: list[int]) -> list[gp.GuitarString]:
+    # JSON: grave → aigu.
+    # PyGuitarPro / GP: aigu → grave.
+    high_to_low = list(reversed(tuning_low_to_high))
+
+    return [
+        gp.GuitarString(number=index + 1, value=int(pitch))
+        for index, pitch in enumerate(high_to_low)
+    ]
+
+
 def choose_string_and_fret(
     pitch: int,
     track: gp.Track,
@@ -153,8 +331,6 @@ def choose_string_and_fret(
     if not candidates:
         return None
 
-    # Heuristique volontairement simple :
-    # on privilégie les frettes basses.
     candidates.sort(key=lambda item: (item[1], item[0]))
     return candidates[0]
 
@@ -216,22 +392,6 @@ def make_note_beat(
         beat.status = gp.BeatStatus.rest
 
     return beat
-
-
-def make_gp_strings(tuning_low_to_high: list[int]) -> list[gp.GuitarString]:
-    high_to_low = list(reversed(tuning_low_to_high))
-
-    return [
-        gp.GuitarString(number=index + 1, value=int(pitch))
-        for index, pitch in enumerate(high_to_low)
-    ]
-
-
-def infer_default_tuning(track_kind: str) -> list[int]:
-    if track_kind.lower() == "bass":
-        return [28, 33, 38, 43]  # E1 A1 D2 G2
-
-    return [40, 45, 50, 55, 59, 64]  # E2 A2 D3 G3 B3 E4
 
 
 def create_measure_headers(
@@ -364,15 +524,24 @@ def build_track_measures(
                     cursor += rest_duration
 
             notes_at_start = local_events[local_start]
+            valid_duration_ticks: list[int] = []
 
-            try:
-                raw_duration_ticks = min(
-                    quantize_ticks(beats_to_ticks(float(note.get("duration", 1))))
-                    for note in notes_at_start
-                    if isinstance(note, dict)
-                )
-            except ValueError:
-                raw_duration_ticks = TICKS_PER_BEAT
+            for note in notes_at_start:
+                if not isinstance(note, dict):
+                    continue
+
+                try:
+                    valid_duration_ticks.append(
+                        quantize_ticks(beats_to_ticks(float(note.get("duration", 1))))
+                    )
+                except Exception:
+                    continue
+
+            raw_duration_ticks = (
+                min(valid_duration_ticks)
+                if valid_duration_ticks
+                else TICKS_PER_BEAT
+            )
 
             next_event_start = (
                 event_starts[event_index + 1]
@@ -430,10 +599,15 @@ def create_track_report(name: str, kind: str, muted: bool) -> dict[str, Any]:
         "name": name,
         "kind": kind,
         "muted": muted,
+        "notationOnly": False,
+        "notationOnlyReason": None,
         "notesInput": 0,
         "notesWritten": 0,
         "notesSkipped": 0,
+        "effectiveTuning": [],
+        "fretCount": DEFAULT_FRET_COUNT,
         "unplaceablePitches": {},
+        "impossibleLowPitches": {},
         "warnings": [],
     }
 
@@ -491,17 +665,61 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
         kind = str(source_track.get("kind", "guitar"))
         muted = bool(source_track.get("muted", False))
 
+        source_notes = source_track.get("notes", [])
+        if not isinstance(source_notes, list):
+            source_notes = []
+
         track_report = create_track_report(name=name, kind=kind, muted=muted)
 
-        tuning = source_track.get("tuning")
+        tuning, used_default_tuning = normalize_tuning(
+            raw_tuning=source_track.get("tuning"),
+            track_kind=kind,
+        )
 
-        if not isinstance(tuning, list) or not tuning:
-            tuning = infer_default_tuning(kind)
-            track_report["warnings"].append("Missing or invalid tuning. Used default tuning.")
+        if used_default_tuning:
+            track_report["warnings"].append(
+                "Missing or invalid tuning. Used default tuning."
+            )
+
+        use_notation_only, notation_only_reason = should_use_notation_only_track(
+            track_kind=kind,
+            tuning_low_to_high=tuning,
+            source_notes=source_notes,
+        )
+
+        if use_notation_only:
+            tuning = make_virtual_notation_tuning(source_notes)
+            fret_count = DEFAULT_FRET_COUNT
+
+            track_report["notationOnly"] = True
+            track_report["notationOnlyReason"] = notation_only_reason
+            track_report["effectiveTuning"] = tuning
+            track_report["fretCount"] = fret_count
+            track_report["warnings"].append(
+                "Used notation-only virtual track to preserve all MIDI pitches."
+            )
+
+            if notation_only_reason:
+                track_report["warnings"].append(f"Reason: {notation_only_reason}.")
+        else:
+            track_report["effectiveTuning"] = tuning
+
+            fret_count = compute_fret_count(
+                tuning_low_to_high=tuning,
+                source_notes=source_notes,
+                track_report=track_report,
+            )
 
         gp_strings = make_gp_strings(tuning)
 
-        midi_instrument = 33 if kind.lower() == "bass" else 25
+        if track_report["notationOnly"]:
+            midi_instrument = PIANO_MIDI_INSTRUMENT
+        else:
+            midi_instrument = (
+                BASS_MIDI_INSTRUMENT
+                if kind.lower() == "bass"
+                else GUITAR_MIDI_INSTRUMENT
+            )
 
         midi_channel = gp.MidiChannel(
             channel=(index - 1) % 16,
@@ -512,6 +730,11 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
         if muted:
             midi_channel.volume = 0
 
+        track_settings = gp.TrackSettings(
+            tablature=not track_report["notationOnly"],
+            notation=True,
+        )
+
         track = gp.Track(
             song=song,
             number=len(song.tracks) + 1,
@@ -519,6 +742,8 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
             strings=gp_strings,
             channel=midi_channel,
             clefTranspose=12 if kind.lower() == "bass" else 0,
+            fretCount=fret_count,
+            settings=track_settings,
         )
 
         build_track_measures(
@@ -565,6 +790,7 @@ def main() -> int:
 
     input_path = Path(sys.argv[1])
     output_path = Path(sys.argv[2])
+
     report["inputJson"] = str(input_path)
     report["outputGp5"] = str(output_path)
 
