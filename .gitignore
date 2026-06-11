@@ -1,0 +1,13 @@
+node_modules/
+dist/
+vendor/
+.env
+
+__pycache__/
+*.pyc
+.venv/
+
+output/
+*.gp5
+
+.DS_Store
