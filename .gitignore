@@ -9,7 +9,9 @@ __pycache__/
 
 output/
 *.gp5
-
-.DS_Store
+*.report.json
+*.conversion-report.json
 
 extension/.runtime/
+
+.DS_Store
