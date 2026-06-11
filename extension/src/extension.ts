@@ -64,6 +64,8 @@ type ExportReport = {
   outputGp5?: string;
   warnings: string[];
   error?: string;
+  pythonExecutable?: string;
+  pythonCheckOutput?: string;
 };
 
 function sanitizeFileName(name: string): string {
@@ -539,7 +541,61 @@ async function openOutputFolder(outputPath: string, report: ExportReport) {
     }
   }
 }
+async function checkPythonEnvironment(
+  pythonPath: string,
+  report: ExportReport
+) {
+  const script = [
+    "import sys",
+    "print('Python executable: ' + sys.executable)",
+    "import guitarpro",
+    "print('PyGuitarPro module: ' + getattr(guitarpro, '__file__', 'unknown'))",
+  ].join("; ");
 
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      pythonPath,
+      ["-c", script],
+      {
+        timeout: 10_000,
+      }
+    );
+
+    const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+
+    report.pythonExecutable = pythonPath;
+    report.pythonCheckOutput = output;
+
+    if (output) {
+      console.log(`[${EXTENSION_ID}] Python check:\n${output}`);
+    }
+  } catch (error: any) {
+    const stdout = typeof error?.stdout === "string" ? error.stdout : "";
+    const stderr = typeof error?.stderr === "string" ? error.stderr : "";
+    const message = error instanceof Error ? error.message : String(error);
+
+    const details = [stdout.trim(), stderr.trim(), message.trim()]
+      .filter(Boolean)
+      .join("\n");
+
+    throw new Error(
+      [
+        "Python environment check failed.",
+        "",
+        "Ableton Live to GP5 requires Python with PyGuitarPro installed.",
+        "",
+        "Fix:",
+        "  python -m pip install PyGuitarPro",
+        "",
+        "Then verify:",
+        "  python -c \"import guitarpro; print(guitarpro.__file__)\"",
+        "",
+        "Details:",
+        details,
+      ].join("\n")
+    );
+  }
+}
 export const activate = async (activation: Activation) => {
   const context = initialize(activation, "1.0.0");
 
@@ -597,6 +653,9 @@ export const activate = async (activation: Activation) => {
 
         console.log(`[${EXTENSION_ID}] python: ${pythonPath}`);
         console.log(`[${EXTENSION_ID}] converter: ${converterPath}`);
+        console.log(`[${EXTENSION_ID}] output gp5: ${gp5Path}`);
+
+        await checkPythonEnvironment(pythonPath, report);
 
         const { stdout, stderr } = await execFileAsync(
           pythonPath,
