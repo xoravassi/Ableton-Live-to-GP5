@@ -8,9 +8,13 @@ const execFileAsync = promisify(execFile);
 
 const EXTENSION_ID = "ableton-live-to-gp5";
 const EXPORT_BASE_NAME = "Ableton_Live_Export";
+
 const IGNORE_MUTED_TRACKS = true;
 const IGNORE_MUTED_CLIPS = true;
-const IGNORE_PERCUSSION_TRACKS = true;
+
+// Les pistes drums/kick/snare/etc. ne sont PAS supprimées.
+// Elles sont exportées dans Guitar Pro, mais silencieuses.
+const MUTE_PERCUSSION_TRACKS_IN_GP5 = true;
 
 type Activation = Parameters<typeof initialize>[0];
 
@@ -31,12 +35,14 @@ type FoundMidiClip = {
   trackName: string;
   startTime: number;
   notes: AbletonMidiNote[];
+  mutedInGp5?: boolean;
 };
 
 type ExportTrack = {
   name: string;
   kind: "guitar" | "bass";
   tuning: number[];
+  muted?: boolean;
   notes: {
     pitch: number;
     start: number;
@@ -51,6 +57,7 @@ type ExportReport = {
   tracksSeen: number;
   midiTracksSeen: number;
   tracksIgnored: { name: string; reason: string }[];
+  tracksMutedInGp5: { name: string; reason: string }[];
   clipsExported: number;
   notesExported: number;
   outputJson?: string;
@@ -100,9 +107,7 @@ function getTuning(kind: "guitar" | "bass"): number[] {
   return [40, 45, 50, 55, 59, 64]; // E2 A2 D3 G3 B3 E4
 }
 
-function shouldIgnoreTrack(name: string): boolean {
-  if (!IGNORE_PERCUSSION_TRACKS) return false;
-
+function isPercussionTrackName(name: string): boolean {
   const lower = name.toLowerCase();
 
   return [
@@ -209,7 +214,9 @@ function expandArrangementClipNotes(clip: any): AbletonMidiNote[] {
 
   const loopStart = numberOrZero(clip.loopStart);
   const loopEnd =
-    typeof clip.loopEnd === "number" ? clip.loopEnd : numberOrZero(clip.duration);
+    typeof clip.loopEnd === "number"
+      ? clip.loopEnd
+      : numberOrZero(clip.duration);
 
   const loopLength = loopEnd - loopStart;
 
@@ -263,7 +270,10 @@ function expandArrangementClipNotes(clip: any): AbletonMidiNote[] {
   );
 }
 
-function extractArrangementMidiClipsFromTrack(track: any): FoundMidiClip[] {
+function extractArrangementMidiClipsFromTrack(
+  track: any,
+  mutedInGp5 = false
+): FoundMidiClip[] {
   const clips: FoundMidiClip[] = [];
 
   const trackName = String(track.name ?? "MIDI Track");
@@ -285,13 +295,17 @@ function extractArrangementMidiClipsFromTrack(track: any): FoundMidiClip[] {
       trackName,
       startTime: numberOrZero(clip.startTime),
       notes: expandedNotes,
+      mutedInGp5,
     });
   }
 
   return clips;
 }
 
-function findArrangementMidiClips(song: any, report: ExportReport): FoundMidiClip[] {
+function findArrangementMidiClips(
+  song: any,
+  report: ExportReport
+): FoundMidiClip[] {
   const tracks = Array.isArray(song.tracks) ? song.tracks : [];
   const found: FoundMidiClip[] = [];
 
@@ -312,15 +326,20 @@ function findArrangementMidiClips(song: any, report: ExportReport): FoundMidiCli
       continue;
     }
 
-    if (shouldIgnoreTrack(trackName)) {
-      report.tracksIgnored.push({
+    const mutedInGp5 =
+      MUTE_PERCUSSION_TRACKS_IN_GP5 && isPercussionTrackName(trackName);
+
+    if (mutedInGp5) {
+      report.tracksMutedInGp5.push({
         name: trackName,
         reason: "drum/percussion name filter",
       });
-      continue;
     }
 
-    const arrangementClips = extractArrangementMidiClipsFromTrack(track);
+    const arrangementClips = extractArrangementMidiClipsFromTrack(
+      track,
+      mutedInGp5
+    );
 
     for (const clip of arrangementClips) {
       found.push(clip);
@@ -342,11 +361,16 @@ function buildExportData(song: any, clips: FoundMidiClip[], report: ExportReport
         name: trackName,
         kind,
         tuning: getTuning(kind),
+        muted: Boolean(clip.mutedInGp5),
         notes: [],
       });
     }
 
     const targetTrack = tracksByName.get(trackName)!;
+
+    if (clip.mutedInGp5) {
+      targetTrack.muted = true;
+    }
 
     for (const note of clip.notes) {
       if (note.muted) continue;
@@ -434,6 +458,7 @@ export const activate = async (activation: Activation) => {
         tracksSeen: 0,
         midiTracksSeen: 0,
         tracksIgnored: [],
+        tracksMutedInGp5: [],
         clipsExported: 0,
         notesExported: 0,
         warnings: [],
