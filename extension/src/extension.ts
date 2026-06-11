@@ -495,9 +495,10 @@ export const activate = async (activation: Activation) => {
         const repoRoot = path.resolve(extensionRoot, "..");
 
         const pythonPath = await resolvePythonPath(repoRoot);
+
         const converterPath = path.join(
-          repoRoot,
-          "converter",
+          extensionRoot,
+          "python",
           "ableton_to_gp5.py"
         );
 
@@ -508,7 +509,7 @@ export const activate = async (activation: Activation) => {
           pythonPath,
           [converterPath, jsonPath, gp5Path],
           {
-            cwd: repoRoot,
+            cwd: extensionRoot,
           }
         );
 
