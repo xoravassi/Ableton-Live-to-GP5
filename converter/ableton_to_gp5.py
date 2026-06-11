@@ -10,9 +10,6 @@ from guitarpro import models as gp
 
 TICKS_PER_BEAT = gp.Duration.quarterTime  # 960
 
-
-# Durées GP simples, en ticks.
-# On reste volontairement simple pour le MVP.
 ALLOWED_DURATIONS = [
     gp.Duration.quarterTime * 4,      # ronde
     gp.Duration.quarterTime * 3,      # blanche pointée
@@ -37,19 +34,11 @@ def beats_to_ticks(beats: float) -> int:
 
 
 def quantize_ticks(ticks: int) -> int:
-    """
-    Quantification volontairement simple.
-    Pour le MVP, on quantifie à la triple croche : 120 ticks.
-    """
     grid = TICKS_PER_BEAT // 8
     return max(grid, int(round(ticks / grid) * grid))
 
 
 def duration_from_ticks(ticks: int) -> gp.Duration:
-    """
-    Convertit une durée en ticks vers une Duration PyGuitarPro.
-    Si PyGuitarPro refuse une valeur, on retombe sur la noire.
-    """
     ticks = max(TICKS_PER_BEAT // 8, quantize_ticks(ticks))
 
     try:
@@ -59,10 +48,6 @@ def duration_from_ticks(ticks: int) -> gp.Duration:
 
 
 def split_duration_ticks(total_ticks: int) -> list[int]:
-    """
-    Découpe une durée en plusieurs durées GP simples.
-    Utile pour remplir les silences.
-    """
     remaining = quantize_ticks(total_ticks)
     result: list[int] = []
 
@@ -80,22 +65,42 @@ def split_duration_ticks(total_ticks: int) -> list[int]:
 
 
 def make_rest(voice: gp.Voice, start_tick: int, duration_ticks: int) -> gp.Beat:
-    beat = gp.Beat(
+    return gp.Beat(
         voice=voice,
         duration=duration_from_ticks(duration_ticks),
         start=start_tick,
         status=gp.BeatStatus.rest,
     )
-    return beat
+
 
 def make_empty_beat(voice: gp.Voice, start_tick: int, duration_ticks: int) -> gp.Beat:
-    beat = gp.Beat(
+    return gp.Beat(
         voice=voice,
         duration=duration_from_ticks(duration_ticks),
         start=start_tick,
         status=gp.BeatStatus.empty,
     )
-    return beat
+
+
+def choose_string_and_fret(
+    pitch: int,
+    track: gp.Track,
+    used_strings: set[int],
+) -> tuple[int, int] | None:
+    candidates: list[tuple[int, int]] = []
+
+    for string in track.strings:
+        fret = pitch - string.value
+
+        if 0 <= fret <= track.fretCount and string.number not in used_strings:
+            candidates.append((string.number, fret))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[1], item[0]))
+    return candidates[0]
+
 
 def make_note_beat(
     voice: gp.Voice,
@@ -124,7 +129,6 @@ def make_note_beat(
         )
 
         if position is None:
-            # Note impossible sur l’accordage courant : ignorée pour le MVP.
             continue
 
         string_number, fret = position
@@ -137,6 +141,7 @@ def make_note_beat(
             string=string_number,
             type=gp.NoteType.normal,
         )
+
         beat.notes.append(note)
 
     if not beat.notes:
@@ -145,41 +150,7 @@ def make_note_beat(
     return beat
 
 
-def choose_string_and_fret(
-    pitch: int,
-    track: gp.Track,
-    used_strings: set[int],
-) -> tuple[int, int] | None:
-    """
-    Choisit une position corde/case approximative.
-
-    Dans PyGuitarPro, track.strings est stocké aigu -> grave :
-    string 1 = corde la plus aiguë.
-    """
-    candidates: list[tuple[int, int]] = []
-
-    for string in track.strings:
-        fret = pitch - string.value
-
-        if 0 <= fret <= track.fretCount and string.number not in used_strings:
-            candidates.append((string.number, fret))
-
-    if not candidates:
-        return None
-
-    # Heuristique simple :
-    # - éviter les frettes trop hautes
-    # - préférer les positions basses
-    # - garder une tab lisible, pas forcément optimale
-    candidates.sort(key=lambda item: (item[1], item[0]))
-    return candidates[0]
-
-
 def make_gp_strings(tuning_low_to_high: list[int]) -> list[gp.GuitarString]:
-    """
-    Notre JSON stocke les cordes grave -> aigu.
-    Guitar Pro / PyGuitarPro les stocke aigu -> grave.
-    """
     high_to_low = list(reversed(tuning_low_to_high))
 
     return [
@@ -257,7 +228,6 @@ def group_notes_by_measure_and_start(
 def build_track_measures(
     track: gp.Track,
     source_track: dict[str, Any],
-    song: gp.Song,
     numerator: int,
     denominator: int,
 ) -> None:
@@ -274,7 +244,6 @@ def build_track_measures(
             existing_voice.beats.clear()
 
         voice = measure.voices[0]
-
         local_events = grouped.get(measure_index, {})
         event_starts = sorted(local_events.keys())
 
@@ -307,6 +276,7 @@ def build_track_measures(
             duration_ticks = max(TICKS_PER_BEAT // 8, duration_ticks)
 
             absolute_start = measure.header.start + local_start
+
             beat = make_note_beat(
                 voice=voice,
                 start_tick=absolute_start,
@@ -314,8 +284,8 @@ def build_track_measures(
                 notes=notes_at_start,
                 track=track,
             )
-            voice.beats.append(beat)
 
+            voice.beats.append(beat)
             cursor = local_start + duration_ticks
 
         if cursor < measure_length_ticks:
@@ -324,7 +294,6 @@ def build_track_measures(
                 voice.beats.append(make_rest(voice, absolute_start, rest_duration))
                 cursor += rest_duration
 
-        # Sécurité : si une mesure est totalement vide, on met une ronde de silence.
         if not voice.beats:
             voice.beats.append(
                 make_rest(
@@ -333,9 +302,7 @@ def build_track_measures(
                     duration_ticks=measure_length_ticks,
                 )
             )
-        # GP5 écrit deux voix par mesure.
-        # On remplit la voix 2 avec un beat "empty" pour éviter que Guitar Pro
-        # affiche un silence parasite de voix vide.
+
         if len(measure.voices) > 1:
             empty_voice = measure.voices[1]
             empty_voice.beats.clear()
@@ -366,11 +333,13 @@ def build_song(data: dict[str, Any]) -> gp.Song:
     song.title = title
     song.tempo = tempo
     song.tempoName = str(tempo)
+
     song.measureHeaders = create_measure_headers(
         measure_count=measure_count,
         numerator=numerator,
         denominator=denominator,
     )
+
     song.tracks = []
 
     for index, source_track in enumerate(data.get("tracks", []), start=1):
@@ -384,24 +353,29 @@ def build_song(data: dict[str, Any]) -> gp.Song:
         gp_strings = make_gp_strings(tuning)
 
         midi_instrument = 33 if kind.lower() == "bass" else 25
+        muted = bool(source_track.get("muted", False))
+
+        midi_channel = gp.MidiChannel(
+            channel=(index - 1) % 16,
+            effectChannel=(index - 1) % 16,
+            instrument=midi_instrument,
+        )
+
+        if muted:
+            midi_channel.volume = 0
 
         track = gp.Track(
             song=song,
             number=index,
             name=name,
             strings=gp_strings,
-            channel=gp.MidiChannel(
-                channel=(index - 1) % 16,
-                effectChannel=(index - 1) % 16,
-                instrument=midi_instrument,
-            ),
+            channel=midi_channel,
             clefTranspose=12 if kind.lower() == "bass" else 0,
         )
 
         build_track_measures(
             track=track,
             source_track=source_track,
-            song=song,
             numerator=numerator,
             denominator=denominator,
         )
