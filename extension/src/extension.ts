@@ -318,14 +318,19 @@ function findArrangementMidiClips(
 
     report.midiTracksSeen += 1;
 
-    if (IGNORE_MUTED_TRACKS && (track.mute || track.mutedViaSolo)) {
+    if (IGNORE_MUTED_TRACKS && track.mute) {
       report.tracksIgnored.push({
         name: trackName,
         reason: "muted",
       });
       continue;
+    } 
+    if (track.mutedViaSolo) {
+      report.warnings.push(
+        `Track "${trackName}" was muted via solo state in Ableton but still exported.`
+      );
     }
-
+    
     const mutedInGp5 =
       MUTE_PERCUSSION_TRACKS_IN_GP5 && isPercussionTrackName(trackName);
 
