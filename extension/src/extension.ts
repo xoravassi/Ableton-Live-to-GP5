@@ -7,6 +7,10 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const EXTENSION_ID = "ableton-live-to-gp5";
+const EXPORT_BASE_NAME = "Ableton_Live_Export";
+const IGNORE_MUTED_TRACKS = true;
+const IGNORE_MUTED_CLIPS = true;
+const IGNORE_PERCUSSION_TRACKS = true;
 
 type Activation = Parameters<typeof initialize>[0];
 
@@ -29,6 +33,32 @@ type FoundMidiClip = {
   notes: AbletonMidiNote[];
 };
 
+type ExportTrack = {
+  name: string;
+  kind: "guitar" | "bass";
+  tuning: number[];
+  notes: {
+    pitch: number;
+    start: number;
+    duration: number;
+    velocity: number;
+  }[];
+};
+
+type ExportReport = {
+  exportedAt: string;
+  mode: "arrangement-only";
+  tracksSeen: number;
+  midiTracksSeen: number;
+  tracksIgnored: { name: string; reason: string }[];
+  clipsExported: number;
+  notesExported: number;
+  outputJson?: string;
+  outputGp5?: string;
+  warnings: string[];
+  error?: string;
+};
+
 function sanitizeFileName(name: string): string {
   return name
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
@@ -38,6 +68,14 @@ function sanitizeFileName(name: string): string {
 
 function numberOrZero(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isMidiTrack(track: any): boolean {
+  return track?.constructor?.name === "MidiTrack";
+}
+
+function isMidiClip(clip: any): boolean {
+  return clip?.constructor?.name === "MidiClip" && Array.isArray(clip.notes);
 }
 
 function inferTrackKind(name: string): "guitar" | "bass" {
@@ -62,139 +100,238 @@ function getTuning(kind: "guitar" | "bass"): number[] {
   return [40, 45, 50, 55, 59, 64]; // E2 A2 D3 G3 B3 E4
 }
 
-function collectPropertyNames(object: unknown): string[] {
-  const properties = new Set<string>();
-  let current: any = object;
+function shouldIgnoreTrack(name: string): boolean {
+  if (!IGNORE_PERCUSSION_TRACKS) return false;
 
-  while (current && current !== Object.prototype) {
-    for (const name of Object.getOwnPropertyNames(current)) {
-      properties.add(name);
+  const lower = name.toLowerCase();
+
+  return [
+    "drum",
+    "drums",
+    "kick",
+    "bd",
+    "snare",
+    "sd",
+    "clap",
+    "hat",
+    "hh",
+    "hihat",
+    "hi-hat",
+    "shaker",
+    "perc",
+    "percu",
+    "tom",
+    "ride",
+    "crash",
+  ].some((keyword) => lower.includes(keyword));
+}
+
+function cloneNoteWithStartTime(
+  note: AbletonMidiNote,
+  startTime: number,
+  duration: number
+): AbletonMidiNote {
+  return {
+    ...note,
+    startTime,
+    duration,
+  };
+}
+
+function addExpandedNote(
+  target: AbletonMidiNote[],
+  note: AbletonMidiNote,
+  sourceStart: number,
+  arrangementOffset: number,
+  arrangementDuration: number
+) {
+  if (note.muted) return;
+
+  const noteStart = numberOrZero(note.startTime);
+  const noteDuration = numberOrZero(note.duration);
+
+  const expandedStart = arrangementOffset + (noteStart - sourceStart);
+
+  if (expandedStart < 0) return;
+  if (expandedStart >= arrangementDuration) return;
+
+  const remainingDuration = arrangementDuration - expandedStart;
+  const clippedDuration = Math.min(noteDuration, remainingDuration);
+
+  if (clippedDuration <= 0) return;
+
+  target.push(cloneNoteWithStartTime(note, expandedStart, clippedDuration));
+}
+
+function expandArrangementClipNotes(clip: any): AbletonMidiNote[] {
+  const notes = Array.isArray(clip.notes)
+    ? (clip.notes as AbletonMidiNote[])
+    : [];
+
+  const clipStart = numberOrZero(clip.startTime);
+  const clipEnd =
+    typeof clip.endTime === "number"
+      ? clip.endTime
+      : clipStart + numberOrZero(clip.duration);
+
+  const arrangementDuration = Math.max(0, clipEnd - clipStart);
+
+  if (arrangementDuration <= 0) {
+    return [];
+  }
+
+  const startMarker = numberOrZero(clip.startMarker);
+  const looping = Boolean(clip.looping);
+
+  if (!looping) {
+    const expandedNotes: AbletonMidiNote[] = [];
+
+    for (const note of notes) {
+      const noteStart = numberOrZero(note.startTime);
+      const noteEnd = noteStart + numberOrZero(note.duration);
+
+      if (noteEnd <= startMarker) continue;
+      if (noteStart >= startMarker + arrangementDuration) continue;
+
+      addExpandedNote(
+        expandedNotes,
+        note,
+        startMarker,
+        0,
+        arrangementDuration
+      );
     }
 
-    current = Object.getPrototypeOf(current);
+    return expandedNotes.sort(
+      (a, b) => a.startTime - b.startTime || a.pitch - b.pitch
+    );
   }
 
-  return Array.from(properties).sort();
-}
+  const loopStart = numberOrZero(clip.loopStart);
+  const loopEnd =
+    typeof clip.loopEnd === "number" ? clip.loopEnd : numberOrZero(clip.duration);
 
-function safeRead(object: any, property: string): unknown {
-  try {
-    return object[property];
-  } catch {
-    return undefined;
+  const loopLength = loopEnd - loopStart;
+
+  if (loopLength <= 0) {
+    return [];
   }
-}
 
-function looksLikeMidiClip(object: any): boolean {
-  const notes = safeRead(object, "notes");
+  const expandedNotes: AbletonMidiNote[] = [];
 
-  return (
-    Array.isArray(notes) &&
-    notes.some(
-      (note) =>
-        note &&
-        typeof note.pitch === "number" &&
-        typeof note.startTime === "number" &&
-        typeof note.duration === "number"
-    )
+  const firstSourceStart =
+    startMarker >= loopStart && startMarker < loopEnd ? startMarker : loopStart;
+
+  const firstSegmentLength = Math.max(0, loopEnd - firstSourceStart);
+
+  for (const note of notes) {
+    const noteStart = numberOrZero(note.startTime);
+
+    if (noteStart >= firstSourceStart && noteStart < loopEnd) {
+      addExpandedNote(
+        expandedNotes,
+        note,
+        firstSourceStart,
+        0,
+        arrangementDuration
+      );
+    }
+  }
+
+  let arrangementOffset = firstSegmentLength;
+
+  while (arrangementOffset < arrangementDuration) {
+    for (const note of notes) {
+      const noteStart = numberOrZero(note.startTime);
+
+      if (noteStart >= loopStart && noteStart < loopEnd) {
+        addExpandedNote(
+          expandedNotes,
+          note,
+          loopStart,
+          arrangementOffset,
+          arrangementDuration
+        );
+      }
+    }
+
+    arrangementOffset += loopLength;
+  }
+
+  return expandedNotes.sort(
+    (a, b) => a.startTime - b.startTime || a.pitch - b.pitch
   );
 }
 
-function findMidiClips(root: unknown): FoundMidiClip[] {
-  const found: FoundMidiClip[] = [];
-  const seen = new WeakSet<object>();
+function extractArrangementMidiClipsFromTrack(track: any): FoundMidiClip[] {
+  const clips: FoundMidiClip[] = [];
 
-  const skipProperties = new Set([
-    "parent",
-    "objectRegistry",
-    "dataModel",
-    "handle",
-    "constructor",
-  ]);
+  const trackName = String(track.name ?? "MIDI Track");
+  const arrangementClips = Array.isArray(track.arrangementClips)
+    ? track.arrangementClips
+    : [];
 
-  function visit(value: unknown, depth: number, currentTrackName: string) {
-    if (!value || depth > 8) return;
+  for (const clip of arrangementClips) {
+    if (!isMidiClip(clip)) continue;
+    if (IGNORE_MUTED_CLIPS && clip.muted) continue;
 
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        visit(item, depth + 1, currentTrackName);
-      }
-      return;
-    }
+    const expandedNotes = expandArrangementClipNotes(clip);
 
-    if (typeof value !== "object") return;
+    if (expandedNotes.length === 0) continue;
 
-    const object = value as any;
-
-    if (seen.has(object)) return;
-    seen.add(object);
-
-    const className = object.constructor?.name ?? "";
-
-    let trackName = currentTrackName;
-
-    if (/track/i.test(className)) {
-      const possibleName = safeRead(object, "name");
-
-      if (typeof possibleName === "string" && possibleName.trim()) {
-        trackName = possibleName;
-      }
-    }
-
-    if (looksLikeMidiClip(object)) {
-      const clipNameRaw = safeRead(object, "name");
-      const clipName =
-        typeof clipNameRaw === "string" && clipNameRaw.trim()
-          ? clipNameRaw
-          : "MIDI Clip";
-
-      const notes = safeRead(object, "notes") as AbletonMidiNote[];
-
-      found.push({
-        clip: object,
-        clipName,
-        trackName: trackName || clipName,
-        startTime: numberOrZero(safeRead(object, "startTime")),
-        notes,
-      });
-
-      return;
-    }
-
-    const propertyNames = collectPropertyNames(object);
-
-    for (const property of propertyNames) {
-      if (skipProperties.has(property)) continue;
-
-      const child = safeRead(object, property);
-
-      if (!child) continue;
-      if (typeof child === "function") continue;
-
-      visit(child, depth + 1, trackName);
-    }
+    clips.push({
+      clip,
+      clipName: String(clip.name ?? "MIDI Clip"),
+      trackName,
+      startTime: numberOrZero(clip.startTime),
+      notes: expandedNotes,
+    });
   }
 
-  visit(root, 0, "");
+  return clips;
+}
+
+function findArrangementMidiClips(song: any, report: ExportReport): FoundMidiClip[] {
+  const tracks = Array.isArray(song.tracks) ? song.tracks : [];
+  const found: FoundMidiClip[] = [];
+
+  report.tracksSeen = tracks.length;
+
+  for (const track of tracks) {
+    const trackName = String(track.name ?? "Unnamed Track");
+
+    if (!isMidiTrack(track)) continue;
+
+    report.midiTracksSeen += 1;
+
+    if (IGNORE_MUTED_TRACKS && (track.mute || track.mutedViaSolo)) {
+      report.tracksIgnored.push({
+        name: trackName,
+        reason: "muted",
+      });
+      continue;
+    }
+
+    if (shouldIgnoreTrack(trackName)) {
+      report.tracksIgnored.push({
+        name: trackName,
+        reason: "drum/percussion name filter",
+      });
+      continue;
+    }
+
+    const arrangementClips = extractArrangementMidiClipsFromTrack(track);
+
+    for (const clip of arrangementClips) {
+      found.push(clip);
+    }
+  }
 
   return found;
 }
 
-function buildExportData(song: any, clips: FoundMidiClip[]) {
-  const tracksByName = new Map<
-    string,
-    {
-      name: string;
-      kind: "guitar" | "bass";
-      tuning: number[];
-      notes: {
-        pitch: number;
-        start: number;
-        duration: number;
-        velocity: number;
-      }[];
-    }
-  >();
+function buildExportData(song: any, clips: FoundMidiClip[], report: ExportReport) {
+  const tracksByName = new Map<string, ExportTrack>();
 
   for (const clip of clips) {
     const trackName = clip.trackName || clip.clipName;
@@ -230,6 +367,16 @@ function buildExportData(song: any, clips: FoundMidiClip[]) {
       notes: track.notes.sort((a, b) => a.start - b.start || a.pitch - b.pitch),
     }));
 
+  report.clipsExported = clips.length;
+  report.notesExported = tracks.reduce(
+    (total, track) => total + track.notes.length,
+    0
+  );
+
+  if (tracks.length === 0) {
+    report.warnings.push("No MIDI notes exported.");
+  }
+
   return {
     song: {
       title: "Ableton Live Export",
@@ -243,87 +390,137 @@ function buildExportData(song: any, clips: FoundMidiClip[]) {
   };
 }
 
-export const activate = (activation: Activation) => {
+async function resolvePythonPath(repoRoot: string): Promise<string> {
+  const localPython = path.join(repoRoot, ".venv", "Scripts", "python.exe");
+
+  if (process.env.PYTHON_PATH) {
+    return process.env.PYTHON_PATH;
+  }
+
+  try {
+    await fs.access(localPython);
+    return localPython;
+  } catch {
+    return "python";
+  }
+}
+
+async function writeReport(storageDirectory: string, report: ExportReport) {
+  const reportPath = path.join(storageDirectory, `${EXPORT_BASE_NAME}.report.json`);
+
+  await fs.writeFile(reportPath, JSON.stringify(report, null, 2), "utf-8");
+
+  console.log(`[${EXTENSION_ID}] report written: ${reportPath}`);
+}
+
+export const activate = async (activation: Activation) => {
   const context = initialize(activation, "1.0.0");
 
-  const storageDirectory =
+  const storageDirectory = path.resolve(
     context.environment.storageDirectory ??
-    context.environment.tempDirectory ??
-    path.join(process.cwd(), ".runtime", "storage");
+      context.environment.tempDirectory ??
+      path.join(process.cwd(), ".runtime", "storage")
+  );
 
   console.log(`[${EXTENSION_ID}] activated`);
   console.log(`[${EXTENSION_ID}] storageDirectory: ${storageDirectory}`);
 
   context.commands.registerCommand(
-    `${EXTENSION_ID}.export-all-midi-to-gp5`,
+    `${EXTENSION_ID}.export-arrangement-midi-to-gp5`,
     async () => {
-      console.log(`[${EXTENSION_ID}] export all MIDI clips to GP5`);
+      const report: ExportReport = {
+        exportedAt: new Date().toISOString(),
+        mode: "arrangement-only",
+        tracksSeen: 0,
+        midiTracksSeen: 0,
+        tracksIgnored: [],
+        clipsExported: 0,
+        notesExported: 0,
+        warnings: [],
+      };
 
-      await fs.mkdir(storageDirectory, { recursive: true });
+      try {
+        console.log(`[${EXTENSION_ID}] export arrangement MIDI to GP5`);
 
-      const song = context.application.song as any;
-      const clips = findMidiClips(song);
+        await fs.mkdir(storageDirectory, { recursive: true });
 
-      console.log(`[${EXTENSION_ID}] MIDI clips found: ${clips.length}`);
+        const song = context.application.song as any;
+        const clips = findArrangementMidiClips(song, report);
+        const exportData = buildExportData(song, clips, report);
 
-      const exportData = buildExportData(song, clips);
+        const baseName = sanitizeFileName(EXPORT_BASE_NAME);
+        const jsonPath = path.join(storageDirectory, `${baseName}.json`);
+        const gp5Path = path.join(storageDirectory, `${baseName}.gp5`);
 
-      const baseName = sanitizeFileName("Ableton_Live_Export");
-      const jsonPath = path.join(storageDirectory, `${baseName}.json`);
-      const gp5Path = path.join(storageDirectory, `${baseName}.gp5`);
+        report.outputJson = jsonPath;
+        report.outputGp5 = gp5Path;
 
-      await fs.writeFile(jsonPath, JSON.stringify(exportData, null, 2), "utf-8");
+        await fs.writeFile(jsonPath, JSON.stringify(exportData, null, 2), "utf-8");
 
-      console.log(`[${EXTENSION_ID}] JSON written: ${jsonPath}`);
-      console.log(`[${EXTENSION_ID}] GP5 target: ${gp5Path}`);
-      console.log(`[${EXTENSION_ID}] exported tracks: ${exportData.tracks.length}`);
+        console.log(`[${EXTENSION_ID}] JSON written: ${jsonPath}`);
+        console.log(`[${EXTENSION_ID}] clips exported: ${report.clipsExported}`);
+        console.log(`[${EXTENSION_ID}] notes exported: ${report.notesExported}`);
 
-      const extensionRoot = process.cwd();
-      const repoRoot = path.resolve(extensionRoot, "..");
+        const extensionRoot = process.cwd();
+        const repoRoot = path.resolve(extensionRoot, "..");
 
-      const pythonPath =
-        process.env.PYTHON_PATH ??
-        path.join(repoRoot, ".venv", "Scripts", "python.exe");
+        const pythonPath = await resolvePythonPath(repoRoot);
+        const converterPath = path.join(
+          repoRoot,
+          "converter",
+          "ableton_to_gp5.py"
+        );
 
-      const converterPath = path.join(
-        repoRoot,
-        "converter",
-        "ableton_to_gp5.py"
-      );
+        console.log(`[${EXTENSION_ID}] python: ${pythonPath}`);
+        console.log(`[${EXTENSION_ID}] converter: ${converterPath}`);
 
-      console.log(`[${EXTENSION_ID}] python: ${pythonPath}`);
-      console.log(`[${EXTENSION_ID}] converter: ${converterPath}`);
+        const { stdout, stderr } = await execFileAsync(
+          pythonPath,
+          [converterPath, jsonPath, gp5Path],
+          {
+            cwd: repoRoot,
+          }
+        );
 
-      const { stdout, stderr } = await execFileAsync(
-        pythonPath,
-        [converterPath, jsonPath, gp5Path],
-        {
-          cwd: repoRoot,
+        if (stdout.trim()) {
+          console.log(`[${EXTENSION_ID}] converter stdout:\n${stdout}`);
         }
-      );
 
-      if (stdout.trim()) {
-        console.log(`[${EXTENSION_ID}] converter stdout:\n${stdout}`);
+        if (stderr.trim()) {
+          console.error(`[${EXTENSION_ID}] converter stderr:\n${stderr}`);
+        }
+
+        console.log(`[${EXTENSION_ID}] GP5 written: ${gp5Path}`);
+
+        await writeReport(storageDirectory, report);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.stack ?? error.message : String(error);
+
+        report.error = message;
+
+        console.error(`[${EXTENSION_ID}] export failed:\n${message}`);
+
+        try {
+          await fs.mkdir(storageDirectory, { recursive: true });
+          await writeReport(storageDirectory, report);
+        } catch {
+          // Nothing else to do.
+        }
       }
-
-      if (stderr.trim()) {
-        console.error(`[${EXTENSION_ID}] converter stderr:\n${stderr}`);
-      }
-
-      console.log(`[${EXTENSION_ID}] GP5 written: ${gp5Path}`);
     }
   );
 
-  context.ui.registerContextMenuAction(
+  await context.ui.registerContextMenuAction(
     "MidiClip",
-    "Ableton Live to GP5 - Export ALL MIDI Clips to GP5",
-    `${EXTENSION_ID}.export-all-midi-to-gp5`
+    "Ableton Live to GP5 - Export Arrangement to GP5",
+    `${EXTENSION_ID}.export-arrangement-midi-to-gp5`
   );
 
-  context.ui.registerContextMenuAction(
+  await context.ui.registerContextMenuAction(
     "MidiTrack",
-    "Ableton Live to GP5 - Export ALL MIDI Clips to GP5",
-    `${EXTENSION_ID}.export-all-midi-to-gp5`
+    "Ableton Live to GP5 - Export Arrangement to GP5",
+    `${EXTENSION_ID}.export-arrangement-midi-to-gp5`
   );
 
   console.log(`[${EXTENSION_ID}] context menu registered`);
