@@ -10,6 +10,7 @@
     "build": "tsc --noEmit && tsx build.ts --production",
     "build:dev": "tsc --noEmit && tsx build.ts",
     "start": "npm run build:dev && extensions-cli run",
+    "start:gp5": "npm run build:dev && extensions-cli run --storage-directory .runtime/storage --temp-directory .runtime/temp",
     "package": "npm run build && extensions-cli package"
   },
   "dependencies": {
