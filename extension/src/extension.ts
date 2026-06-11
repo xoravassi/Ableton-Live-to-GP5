@@ -442,6 +442,104 @@ async function writeReport(storageDirectory: string, report: ExportReport) {
   console.log(`[${EXTENSION_ID}] report written: ${reportPath}`);
 }
 
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveConverterPath(storageDirectory: string): Promise<string> {
+  const extensionId = path.basename(storageDirectory);
+
+  const candidates = [
+    // Dev mode : repo/extension/python/ableton_to_gp5.py
+    path.join(process.cwd(), "python", "ableton_to_gp5.py"),
+
+    // Fallback ancien dev mode : repo/converter/ableton_to_gp5.py
+    path.join(process.cwd(), "..", "converter", "ableton_to_gp5.py"),
+
+    // Packaged extension install path on Windows:
+    // C:\Users\...\AppData\Local\Ableton\Extensions\<extensionId>\python\...
+    path.join(
+      process.env.LOCALAPPDATA ?? "",
+      "Ableton",
+      "Extensions",
+      extensionId,
+      "python",
+      "ableton_to_gp5.py"
+    ),
+
+    // Same idea, inferred from storageDirectory:
+    // storageDirectory = ...\Ableton\Extensions Data\<extensionId>
+    // extensionPath     = ...\Ableton\Extensions\<extensionId>
+    path.join(
+      path.dirname(path.dirname(storageDirectory)),
+      "Extensions",
+      extensionId,
+      "python",
+      "ableton_to_gp5.py"
+    ),
+  ];
+
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+
+    if (await fileExists(resolved)) {
+      return resolved;
+    }
+  }
+
+  throw new Error(
+    [
+      "Unable to find bundled Python converter.",
+      "Checked paths:",
+      ...candidates.map((candidate) => `- ${path.resolve(candidate)}`),
+    ].join("\n")
+  );
+}
+
+async function openOutputFolder(outputPath: string, report: ExportReport) {
+  try {
+    const normalizedOutputPath = path.normalize(outputPath);
+    const outputFolder = path.dirname(normalizedOutputPath);
+
+    await fs.access(normalizedOutputPath);
+
+    if (process.platform === "win32") {
+      await execFileAsync("explorer.exe", [
+        `/select,"${normalizedOutputPath}"`,
+      ]);
+      return;
+    }
+
+    if (process.platform === "darwin") {
+      await execFileAsync("open", ["-R", normalizedOutputPath]);
+      return;
+    }
+
+    await execFileAsync("xdg-open", [outputFolder]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    report.warnings.push(
+      `GP5 export succeeded, but opening the output folder failed: ${message}`
+    );
+
+    console.warn(
+      `[${EXTENSION_ID}] GP5 export succeeded, but opening output folder failed: ${message}`
+    );
+
+    try {
+      await execFileAsync("explorer.exe", [path.dirname(outputPath)]);
+    } catch {
+      // Ignore fallback failure.
+    }
+  }
+}
+
 export const activate = async (activation: Activation) => {
   const context = initialize(activation, "1.0.0");
 
@@ -495,12 +593,7 @@ export const activate = async (activation: Activation) => {
         const repoRoot = path.resolve(extensionRoot, "..");
 
         const pythonPath = await resolvePythonPath(repoRoot);
-
-        const converterPath = path.join(
-          extensionRoot,
-          "python",
-          "ableton_to_gp5.py"
-        );
+        const converterPath = await resolveConverterPath(storageDirectory);
 
         console.log(`[${EXTENSION_ID}] python: ${pythonPath}`);
         console.log(`[${EXTENSION_ID}] converter: ${converterPath}`);
@@ -509,7 +602,7 @@ export const activate = async (activation: Activation) => {
           pythonPath,
           [converterPath, jsonPath, gp5Path],
           {
-            cwd: extensionRoot,
+            cwd: storageDirectory,
           }
         );
 
@@ -523,7 +616,10 @@ export const activate = async (activation: Activation) => {
 
         console.log(`[${EXTENSION_ID}] GP5 written: ${gp5Path}`);
 
+        await openOutputFolder(gp5Path, report);
+
         await writeReport(storageDirectory, report);
+
       } catch (error) {
         const message =
           error instanceof Error ? error.stack ?? error.message : String(error);
