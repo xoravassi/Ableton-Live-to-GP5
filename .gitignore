@@ -11,3 +11,5 @@ output/
 *.gp5
 
 .DS_Store
+
+extension/.runtime/
