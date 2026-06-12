@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Export Guitar Pro 5</title>
+  <script>
+    const dialogData = JSON.parse(
+      decodeURIComponent("__ABLETON_TO_GP5_DIALOG_DATA__")
+    );
+    const isWebKitMessageHandlerAvailable =
+      window.webkit &&
+      window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.live;
+    const isWebView2 = window.chrome && window.chrome.webview;
+
+    function sendMessage(message) {
+      if (isWebKitMessageHandlerAvailable) {
+        window.webkit.messageHandlers.live.postMessage(message);
+      } else if (isWebView2) {
+        window.chrome.webview.postMessage(message);
+      }
+    }
+
+    function closeWithResult(result) {
+      sendMessage({
+        method: "close_and_send",
+        params: [JSON.stringify(result)]
+      });
+    }
+
+    function submitExport() {
+      const nameInput = document.getElementById("export-name");
+      const name = nameInput.value.trim();
+
+      if (!name) {
+        nameInput.focus();
+        return;
+      }
+
+      closeWithResult({ action: "export", name });
+    }
+
+    function renderTracks() {
+      const trackList = document.getElementById("track-list");
+      const statusLabels = {
+        exported: "Export\u00e9e",
+        muted: "Muette dans GP5",
+        ignored: "Ignor\u00e9e",
+        empty: "Sans notes"
+      };
+
+      dialogData.tracks.forEach((track) => {
+        const row = document.createElement("div");
+        row.className = "track-row";
+
+        const description = document.createElement("div");
+        description.className = "track-description";
+
+        const name = document.createElement("div");
+        name.className = "track-name";
+        name.textContent = track.name;
+
+        const detail = document.createElement("div");
+        detail.className = "track-detail";
+        detail.textContent = track.detail;
+
+        const status = document.createElement("div");
+        status.className = "track-status track-status--" + track.status;
+        status.textContent = statusLabels[track.status];
+
+        const count = document.createElement("div");
+        count.className = "track-count";
+        count.textContent =
+          track.clipCount + " clips / " + track.noteCount + " notes";
+
+        description.appendChild(name);
+        description.appendChild(detail);
+        row.appendChild(description);
+        row.appendChild(status);
+        row.appendChild(count);
+        trackList.appendChild(row);
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const form = document.getElementById("export-form");
+      const nameInput = document.getElementById("export-name");
+      const summary = document.getElementById("summary");
+
+      nameInput.value = dialogData.suggestedName;
+      summary.textContent =
+        dialogData.counts.exportedTracks + " pistes / " +
+        dialogData.counts.clips + " clips / " +
+        dialogData.counts.notes + " notes";
+
+      renderTracks();
+      nameInput.focus();
+      nameInput.select();
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitExport();
+      });
+
+      document.getElementById("cancel-button").addEventListener("click", () => {
+        closeWithResult({ action: "cancel" });
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeWithResult({ action: "cancel" });
+        }
+      });
+    });
+  </script>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    *:not(dialog) {
+      margin: 0;
+    }
+
+    input,
+    button {
+      font: inherit;
+    }
+
+    :root {
+      --p-live-ui-bg: hsl(0, 0%, 21%);
+      --p-live-control-bg: hsl(0, 0%, 16%);
+      --p-live-input-bg: hsl(0, 0%, 12%);
+      --p-live-text-primary: hsl(0, 0%, 71%);
+      --p-live-control-border: hsl(0, 0%, 7%);
+      --p-live-text-secondary: hsl(0, 0%, 48%);
+      --p-live-accent-primary: hsl(31, 100%, 67%);
+      --p-live-control-text-enabled: hsl(0, 0%, 7%);
+
+      --c-bg: var(--p-live-ui-bg);
+      --c-panel: hsl(0, 0%, 18%);
+      --c-control: var(--p-live-control-bg);
+      --c-control-hover: hsl(0, 0%, 13%);
+      --c-input: var(--p-live-input-bg);
+      --c-border: var(--p-live-control-border);
+      --c-outline: var(--p-live-text-secondary);
+      --c-text: var(--p-live-text-primary);
+      --c-text-secondary: hsl(0, 0%, 58%);
+      --c-accent: var(--p-live-accent-primary);
+      --c-accent-text: var(--p-live-control-text-enabled);
+      --c-exported: hsl(150, 48%, 62%);
+      --c-muted: hsl(43, 90%, 68%);
+      --c-ignored: hsl(4, 66%, 69%);
+      --c-empty: hsl(0, 0%, 55%);
+    }
+
+    html {
+      height: 100%;
+      background: var(--c-bg);
+      color: var(--c-text);
+      font-family: "AbletonSansSmall", sans-serif;
+      font-size: 11.5px;
+      font-weight: 500;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    main {
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+    }
+
+    header,
+    .name-section,
+    footer {
+      padding: 14px 16px;
+    }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--c-border);
+    }
+
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .summary {
+      color: var(--c-text-secondary);
+      white-space: nowrap;
+    }
+
+    .name-section {
+      display: grid;
+      gap: 6px;
+      border-bottom: 1px solid var(--c-border);
+      background: var(--c-panel);
+    }
+
+    label,
+    h2 {
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .name-help {
+      color: var(--c-text-secondary);
+    }
+
+    .alx-input {
+      width: 100%;
+      height: 24px;
+      padding: 0 6px;
+      border: 1px solid var(--c-border);
+      border-radius: 0;
+      outline: 0;
+      background: var(--c-input);
+      color: var(--c-text);
+    }
+
+    .alx-input:focus {
+      outline: 2px solid var(--c-outline);
+    }
+
+    .tracks-section {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 8px;
+      padding: 12px 16px;
+    }
+
+    .track-list {
+      min-height: 0;
+      overflow-y: auto;
+      border: 1px solid var(--c-border);
+      background: var(--c-panel);
+    }
+
+    .track-row {
+      min-height: 48px;
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) 110px 108px;
+      align-items: center;
+      gap: 12px;
+      padding: 7px 9px;
+      border-bottom: 1px solid var(--c-border);
+    }
+
+    .track-row:last-child {
+      border-bottom: 0;
+    }
+
+    .track-description {
+      min-width: 0;
+    }
+
+    .track-name {
+      overflow-wrap: anywhere;
+      font-weight: 600;
+    }
+
+    .track-detail,
+    .track-count {
+      color: var(--c-text-secondary);
+    }
+
+    .track-detail {
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+    }
+
+    .track-count {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .track-status {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .track-status--exported {
+      color: var(--c-exported);
+    }
+
+    .track-status--muted {
+      color: var(--c-muted);
+    }
+
+    .track-status--ignored {
+      color: var(--c-ignored);
+    }
+
+    .track-status--empty {
+      color: var(--c-empty);
+    }
+
+    footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      border-top: 1px solid var(--c-border);
+    }
+
+    .alx-button {
+      min-width: 86px;
+      height: 22px;
+      padding: 0 12px;
+      border: 1px solid var(--c-border);
+      border-radius: 11px;
+      outline: 0;
+      background: var(--c-control);
+      color: var(--c-text);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    .alx-button:hover {
+      background: var(--c-control-hover);
+    }
+
+    .alx-button:focus {
+      outline: 2px solid var(--c-outline);
+    }
+
+    .alx-button:active,
+    .alx-button--primary {
+      background: var(--c-accent);
+      color: var(--c-accent-text);
+    }
+
+    .alx-button--primary:hover {
+      background: hsl(31, 100%, 62%);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Export Guitar Pro 5</h1>
+      <div class="summary" id="summary"></div>
+    </header>
+
+    <section class="name-section">
+      <form id="export-form">
+        <label for="export-name">Nom de l'export</label>
+        <input
+          class="alx-input"
+          id="export-name"
+          name="export-name"
+          type="text"
+          maxlength="80"
+          autocomplete="off"
+          required
+        >
+      </form>
+      <div class="name-help">
+        Le SDK ne fournit pas le nom du Live Set. Confirme ou modifie ce nom.
+      </div>
+    </section>
+
+    <section class="tracks-section">
+      <h2>Pistes MIDI de l'Arrangement</h2>
+      <div class="track-list" id="track-list"></div>
+    </section>
+
+    <footer>
+      <button class="alx-button" id="cancel-button" type="button">Annuler</button>
+      <button
+        class="alx-button alx-button--primary"
+        type="submit"
+        form="export-form"
+      >
+        Exporter
+      </button>
+    </footer>
+  </main>
+</body>
+</html>
