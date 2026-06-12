@@ -32,7 +32,7 @@ python -c "import guitarpro; print(guitarpro.__file__)"
 
 1. Open a Live Set containing MIDI clips in the Arrangement View.
 2. Right-click a MIDI clip or MIDI track.
-3. Select **Ableton Live to GP5 - Export Arrangement to GP5**.
+3. Select **Export to GP5**.
 4. Review the detected tracks and enter the export name.
 5. Click **Exporter**.
 
