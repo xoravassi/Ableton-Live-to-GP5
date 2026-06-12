@@ -640,6 +640,7 @@ export const activate = async (activation: Activation) => {
 
         const song = context.application.song as any;
         const clips = findArrangementMidiClips(song, report);
+  
         const exportData = buildExportData(song, clips, report);
 
         const baseName = sanitizeFileName(EXPORT_BASE_NAME);
@@ -650,6 +651,21 @@ export const activate = async (activation: Activation) => {
         report.outputGp5 = gp5Path;
 
         await fs.writeFile(jsonPath, JSON.stringify(exportData, null, 2), "utf-8");
+
+        if (report.notesExported === 0) {
+          report.warnings.push(
+            "No MIDI notes were exported. GP5 conversion skipped to avoid overwriting the previous valid export."
+          );
+
+          console.warn(
+            `[${EXTENSION_ID}] No MIDI notes exported. GP5 conversion skipped.`
+          );
+
+          await writeReport(storageDirectory, report);
+          await openOutputFolder(jsonPath, report);
+          return;
+        }        
+        
 
         console.log(`[${EXTENSION_ID}] JSON written: ${jsonPath}`);
         console.log(`[${EXTENSION_ID}] clips exported: ${report.clipsExported}`);
