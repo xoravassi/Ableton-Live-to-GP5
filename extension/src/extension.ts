@@ -1,7 +1,7 @@
 import { initialize } from "@ableton-extensions/sdk";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -511,18 +511,32 @@ async function openOutputFolder(outputPath: string, report: ExportReport) {
     await fs.access(normalizedOutputPath);
 
     if (process.platform === "win32") {
-      await execFileAsync("explorer.exe", [
-        `/select,"${normalizedOutputPath}"`,
-      ]);
+      const child = spawn("explorer.exe", [outputFolder], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: false,
+      });
+
+      child.unref();
       return;
     }
 
     if (process.platform === "darwin") {
-      await execFileAsync("open", ["-R", normalizedOutputPath]);
+      const child = spawn("open", [outputFolder], {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      child.unref();
       return;
     }
 
-    await execFileAsync("xdg-open", [outputFolder]);
+    const child = spawn("xdg-open", [outputFolder], {
+      detached: true,
+      stdio: "ignore",
+    });
+
+    child.unref();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -533,14 +547,10 @@ async function openOutputFolder(outputPath: string, report: ExportReport) {
     console.warn(
       `[${EXTENSION_ID}] GP5 export succeeded, but opening output folder failed: ${message}`
     );
-
-    try {
-      await execFileAsync("explorer.exe", [path.dirname(outputPath)]);
-    } catch {
-      // Ignore fallback failure.
-    }
   }
 }
+
+
 async function checkPythonEnvironment(
   pythonPath: string,
   report: ExportReport
