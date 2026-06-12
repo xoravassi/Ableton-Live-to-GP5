@@ -3,6 +3,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import exportDialogInterface from "./interface.html";
+import converterSource from "../python/ableton_to_gp5.py";
 
 const execFileAsync = promisify(execFile);
 
@@ -11,9 +13,6 @@ const EXPORT_BASE_NAME = "Ableton_Live_Export";
 
 const IGNORE_MUTED_TRACKS = true;
 const IGNORE_MUTED_CLIPS = true;
-
-// Les pistes drums/kick/snare/etc. ne sont PAS supprimées.
-// Elles sont exportées dans Guitar Pro, mais silencieuses.
 const MUTE_PERCUSSION_TRACKS_IN_GP5 = true;
 
 type Activation = Parameters<typeof initialize>[0];
@@ -54,6 +53,7 @@ type ExportTrack = {
 type ExportReport = {
   exportedAt: string;
   mode: "arrangement-only";
+  exportBaseName?: string;
   tracksSeen: number;
   midiTracksSeen: number;
   tracksIgnored: { name: string; reason: string }[];
@@ -62,10 +62,31 @@ type ExportReport = {
   notesExported: number;
   outputJson?: string;
   outputGp5?: string;
-  warnings: string[];
-  error?: string;
   pythonExecutable?: string;
   pythonCheckOutput?: string;
+  warnings: string[];
+  error?: string;
+};
+
+type VersionedExportPaths = {
+  stem: string;
+  jsonPath: string;
+  gp5Path: string;
+  reportPath: string;
+  conversionReportPath: string;
+};
+
+type ExportDialogTrack = {
+  name: string;
+  status: "exported" | "muted" | "ignored" | "empty";
+  clipCount: number;
+  noteCount: number;
+  detail: string;
+};
+
+type ExportDialogResult = {
+  action: "export" | "cancel";
+  name?: string;
 };
 
 function sanitizeFileName(name: string): string {
@@ -77,6 +98,15 @@ function sanitizeFileName(name: string): string {
 
 function numberOrZero(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isMidiTrack(track: any): boolean {
@@ -326,13 +356,14 @@ function findArrangementMidiClips(
         reason: "muted",
       });
       continue;
-    } 
+    }
+
     if (track.mutedViaSolo) {
       report.warnings.push(
         `Track "${trackName}" was muted via solo state in Ableton but still exported.`
       );
     }
-    
+
     const mutedInGp5 =
       MUTE_PERCUSSION_TRACKS_IN_GP5 && isPercussionTrackName(trackName);
 
@@ -421,6 +452,198 @@ function buildExportData(song: any, clips: FoundMidiClip[], report: ExportReport
   };
 }
 
+function getBaseNameFromPathOrName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.trim();
+
+  if (!trimmed) return null;
+
+  const parsed = path.parse(trimmed);
+  const candidate = parsed.name || trimmed;
+
+  if (!candidate) return null;
+
+  return sanitizeFileName(candidate);
+}
+
+function buildExportDialogTracks(
+  song: any,
+  clips: FoundMidiClip[],
+  exportData: ReturnType<typeof buildExportData>,
+  report: ExportReport
+): ExportDialogTrack[] {
+  const clipsByTrack = new Map<string, number>();
+
+  for (const clip of clips) {
+    clipsByTrack.set(
+      clip.trackName,
+      (clipsByTrack.get(clip.trackName) ?? 0) + 1
+    );
+  }
+
+  const exportedByTrack = new Map(
+    exportData.tracks.map((track) => [track.name, track])
+  );
+  const ignoredByTrack = new Map(
+    report.tracksIgnored.map((track) => [track.name, track.reason])
+  );
+  const summaries: ExportDialogTrack[] = [];
+  const namesSeen = new Set<string>();
+  const tracks = Array.isArray(song.tracks) ? song.tracks : [];
+
+  for (const track of tracks) {
+    if (!isMidiTrack(track)) continue;
+
+    const name = String(track.name ?? "Unnamed Track");
+
+    if (namesSeen.has(name)) continue;
+    namesSeen.add(name);
+
+    const exportedTrack = exportedByTrack.get(name);
+    const ignoredReason = ignoredByTrack.get(name);
+
+    if (exportedTrack) {
+      const muted = Boolean(exportedTrack.muted);
+
+      summaries.push({
+        name,
+        status: muted ? "muted" : "exported",
+        clipCount: clipsByTrack.get(name) ?? 0,
+        noteCount: exportedTrack.notes.length,
+        detail: muted
+          ? "Exportee, piste muette dans Guitar Pro"
+          : "Exportee dans Guitar Pro",
+      });
+      continue;
+    }
+
+    if (ignoredReason) {
+      summaries.push({
+        name,
+        status: "ignored",
+        clipCount: 0,
+        noteCount: 0,
+        detail:
+          ignoredReason === "muted"
+            ? "Ignoree car explicitement mutee dans Ableton"
+            : `Ignoree : ${ignoredReason}`,
+      });
+      continue;
+    }
+
+    summaries.push({
+      name,
+      status: "empty",
+      clipCount: 0,
+      noteCount: 0,
+      detail: "Aucune note MIDI exportable dans l'Arrangement",
+    });
+  }
+
+  return summaries;
+}
+
+function createExportDialogHtml(
+  suggestedName: string,
+  tracks: ExportDialogTrack[],
+  report: ExportReport
+): string {
+  const payload = encodeURIComponent(
+    JSON.stringify({
+      suggestedName,
+      tracks,
+      counts: {
+        exportedTracks: tracks.filter(
+          (track) => track.status === "exported" || track.status === "muted"
+        ).length,
+        clips: report.clipsExported,
+        notes: report.notesExported,
+      },
+    })
+  );
+  const dataMarker = "__ABLETON_TO_GP5_DIALOG_DATA__";
+
+  if (!exportDialogInterface.includes(dataMarker)) {
+    throw new Error("Export dialog data marker is missing from interface.html.");
+  }
+
+  return exportDialogInterface.replace(dataMarker, payload);
+}
+
+async function showExportDialog(
+  context: any,
+  suggestedName: string,
+  tracks: ExportDialogTrack[],
+  report: ExportReport
+): Promise<string | null> {
+  const dialogHtml = createExportDialogHtml(
+    suggestedName,
+    tracks,
+    report
+  );
+  const dialogUrl = `data:text/html;charset=utf-8,${encodeURIComponent(dialogHtml)}`;
+  const rawResult = await context.ui.showModalDialog(dialogUrl, 760, 680);
+
+  if (!rawResult) return null;
+
+  const result = JSON.parse(rawResult) as ExportDialogResult;
+
+  if (result.action !== "export") return null;
+
+  return getBaseNameFromPathOrName(result.name) ?? null;
+}
+
+async function createVersionedExportPaths(
+  storageDirectory: string,
+  baseName: string
+): Promise<VersionedExportPaths> {
+  const safeBaseName = sanitizeFileName(baseName || EXPORT_BASE_NAME);
+
+  for (let version = 1; version <= 999; version += 1) {
+    const suffix = String(version).padStart(3, "0");
+    const stem = `${safeBaseName}_v${suffix}`;
+
+    const jsonPath = path.join(storageDirectory, `${stem}.json`);
+    const gp5Path = path.join(storageDirectory, `${stem}.gp5`);
+    const reportPath = path.join(storageDirectory, `${stem}.report.json`);
+    const conversionReportPath = path.join(
+      storageDirectory,
+      `${stem}.conversion-report.json`
+    );
+
+    const alreadyExists =
+      (await fileExists(jsonPath)) ||
+      (await fileExists(gp5Path)) ||
+      (await fileExists(reportPath)) ||
+      (await fileExists(conversionReportPath));
+
+    if (!alreadyExists) {
+      return {
+        stem,
+        jsonPath,
+        gp5Path,
+        reportPath,
+        conversionReportPath,
+      };
+    }
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const stem = `${safeBaseName}_${timestamp}`;
+
+  return {
+    stem,
+    jsonPath: path.join(storageDirectory, `${stem}.json`),
+    gp5Path: path.join(storageDirectory, `${stem}.gp5`),
+    reportPath: path.join(storageDirectory, `${stem}.report.json`),
+    conversionReportPath: path.join(
+      storageDirectory,
+      `${stem}.conversion-report.json`
+    ),
+  };
+}
+
 async function resolvePythonPath(repoRoot: string): Promise<string> {
   const localPython = path.join(repoRoot, ".venv", "Scripts", "python.exe");
 
@@ -436,120 +659,15 @@ async function resolvePythonPath(repoRoot: string): Promise<string> {
   }
 }
 
-async function writeReport(storageDirectory: string, report: ExportReport) {
-  const reportPath = path.join(storageDirectory, `${EXPORT_BASE_NAME}.report.json`);
+async function materializeConverter(tempDirectory: string): Promise<string> {
+  await fs.mkdir(tempDirectory, { recursive: true });
 
-  await fs.writeFile(reportPath, JSON.stringify(report, null, 2), "utf-8");
+  const converterPath = path.join(tempDirectory, "ableton_to_gp5.py");
 
-  console.log(`[${EXTENSION_ID}] report written: ${reportPath}`);
+  await fs.writeFile(converterPath, converterSource, "utf-8");
+
+  return converterPath;
 }
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveConverterPath(storageDirectory: string): Promise<string> {
-  const extensionId = path.basename(storageDirectory);
-
-  const candidates = [
-    // Dev mode : repo/extension/python/ableton_to_gp5.py
-    path.join(process.cwd(), "python", "ableton_to_gp5.py"),
-
-    // Fallback ancien dev mode : repo/converter/ableton_to_gp5.py
-    path.join(process.cwd(), "..", "converter", "ableton_to_gp5.py"),
-
-    // Packaged extension install path on Windows:
-    // C:\Users\...\AppData\Local\Ableton\Extensions\<extensionId>\python\...
-    path.join(
-      process.env.LOCALAPPDATA ?? "",
-      "Ableton",
-      "Extensions",
-      extensionId,
-      "python",
-      "ableton_to_gp5.py"
-    ),
-
-    // Same idea, inferred from storageDirectory:
-    // storageDirectory = ...\Ableton\Extensions Data\<extensionId>
-    // extensionPath     = ...\Ableton\Extensions\<extensionId>
-    path.join(
-      path.dirname(path.dirname(storageDirectory)),
-      "Extensions",
-      extensionId,
-      "python",
-      "ableton_to_gp5.py"
-    ),
-  ];
-
-  for (const candidate of candidates) {
-    const resolved = path.resolve(candidate);
-
-    if (await fileExists(resolved)) {
-      return resolved;
-    }
-  }
-
-  throw new Error(
-    [
-      "Unable to find bundled Python converter.",
-      "Checked paths:",
-      ...candidates.map((candidate) => `- ${path.resolve(candidate)}`),
-    ].join("\n")
-  );
-}
-
-async function openOutputFolder(outputPath: string, report: ExportReport) {
-  try {
-    const normalizedOutputPath = path.normalize(outputPath);
-    const outputFolder = path.dirname(normalizedOutputPath);
-
-    await fs.access(normalizedOutputPath);
-
-    if (process.platform === "win32") {
-      const child = spawn("explorer.exe", [outputFolder], {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: false,
-      });
-
-      child.unref();
-      return;
-    }
-
-    if (process.platform === "darwin") {
-      const child = spawn("open", [outputFolder], {
-        detached: true,
-        stdio: "ignore",
-      });
-
-      child.unref();
-      return;
-    }
-
-    const child = spawn("xdg-open", [outputFolder], {
-      detached: true,
-      stdio: "ignore",
-    });
-
-    child.unref();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-
-    report.warnings.push(
-      `GP5 export succeeded, but opening the output folder failed: ${message}`
-    );
-
-    console.warn(
-      `[${EXTENSION_ID}] GP5 export succeeded, but opening output folder failed: ${message}`
-    );
-  }
-}
-
 
 async function checkPythonEnvironment(
   pythonPath: string,
@@ -606,6 +724,60 @@ async function checkPythonEnvironment(
     );
   }
 }
+
+async function openOutputFolder(outputPath: string, report: ExportReport) {
+  try {
+    const normalizedOutputPath = path.normalize(outputPath);
+    const outputFolder = path.dirname(normalizedOutputPath);
+
+    await fs.access(normalizedOutputPath);
+
+    if (process.platform === "win32") {
+      const child = spawn("explorer.exe", [outputFolder], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: false,
+      });
+
+      child.unref();
+      return;
+    }
+
+    if (process.platform === "darwin") {
+      const child = spawn("open", [outputFolder], {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      child.unref();
+      return;
+    }
+
+    const child = spawn("xdg-open", [outputFolder], {
+      detached: true,
+      stdio: "ignore",
+    });
+
+    child.unref();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    report.warnings.push(
+      `GP5 export succeeded, but opening the output folder failed: ${message}`
+    );
+
+    console.warn(
+      `[${EXTENSION_ID}] GP5 export succeeded, but opening output folder failed: ${message}`
+    );
+  }
+}
+
+async function writeReport(reportPath: string, report: ExportReport) {
+  await fs.writeFile(reportPath, JSON.stringify(report, null, 2), "utf-8");
+
+  console.log(`[${EXTENSION_ID}] report written: ${reportPath}`);
+}
+
 export const activate = async (activation: Activation) => {
   const context = initialize(activation, "1.0.0");
 
@@ -613,6 +785,9 @@ export const activate = async (activation: Activation) => {
     context.environment.storageDirectory ??
       context.environment.tempDirectory ??
       path.join(process.cwd(), ".runtime", "storage")
+  );
+  const tempDirectory = path.resolve(
+    context.environment.tempDirectory ?? storageDirectory
   );
 
   console.log(`[${EXTENSION_ID}] activated`);
@@ -633,6 +808,11 @@ export const activate = async (activation: Activation) => {
         warnings: [],
       };
 
+      let reportPath = path.join(
+        storageDirectory,
+        `${EXPORT_BASE_NAME}_error.report.json`
+      );
+
       try {
         console.log(`[${EXTENSION_ID}] export arrangement MIDI to GP5`);
 
@@ -640,43 +820,71 @@ export const activate = async (activation: Activation) => {
 
         const song = context.application.song as any;
         const clips = findArrangementMidiClips(song, report);
-  
         const exportData = buildExportData(song, clips, report);
 
-        const baseName = sanitizeFileName(EXPORT_BASE_NAME);
-        const jsonPath = path.join(storageDirectory, `${baseName}.json`);
-        const gp5Path = path.join(storageDirectory, `${baseName}.gp5`);
+        const dialogTracks = buildExportDialogTracks(
+          song,
+          clips,
+          exportData,
+          report
+        );
+        const exportBaseName = await showExportDialog(
+          context,
+          EXPORT_BASE_NAME,
+          dialogTracks,
+          report
+        );
+
+        if (!exportBaseName) {
+          console.log(`[${EXTENSION_ID}] export cancelled`);
+          return;
+        }
+
+        report.exportBaseName = exportBaseName;
+        exportData.song.title = exportBaseName;
+
+        const exportPaths = await createVersionedExportPaths(
+          storageDirectory,
+          exportBaseName
+        );
+
+        const jsonPath = exportPaths.jsonPath;
+        const gp5Path = exportPaths.gp5Path;
+        reportPath = exportPaths.reportPath;
 
         report.outputJson = jsonPath;
         report.outputGp5 = gp5Path;
 
         await fs.writeFile(jsonPath, JSON.stringify(exportData, null, 2), "utf-8");
 
+        console.log(`[${EXTENSION_ID}] export name: ${exportBaseName}`);
+        console.log(`[${EXTENSION_ID}] export stem: ${exportPaths.stem}`);
+        console.log(`[${EXTENSION_ID}] JSON written: ${jsonPath}`);
+        console.log(`[${EXTENSION_ID}] clips exported: ${report.clipsExported}`);
+        console.log(`[${EXTENSION_ID}] notes exported: ${report.notesExported}`);
+
         if (report.notesExported === 0) {
           report.warnings.push(
-            "No MIDI notes were exported. GP5 conversion skipped to avoid overwriting the previous valid export."
+            "No MIDI notes were exported. GP5 conversion skipped to avoid creating an empty export."
           );
 
           console.warn(
             `[${EXTENSION_ID}] No MIDI notes exported. GP5 conversion skipped.`
           );
 
-          await writeReport(storageDirectory, report);
+          await writeReport(reportPath, report);
           await openOutputFolder(jsonPath, report);
           return;
-        }        
-        
-
-        console.log(`[${EXTENSION_ID}] JSON written: ${jsonPath}`);
-        console.log(`[${EXTENSION_ID}] clips exported: ${report.clipsExported}`);
-        console.log(`[${EXTENSION_ID}] notes exported: ${report.notesExported}`);
+        }
 
         const extensionRoot = process.cwd();
         const repoRoot = path.resolve(extensionRoot, "..");
 
         const pythonPath = await resolvePythonPath(repoRoot);
-        const converterPath = await resolveConverterPath(storageDirectory);
+        const converterPath = await materializeConverter(tempDirectory);
 
+        console.log(`[${EXTENSION_ID}] extensionRoot: ${extensionRoot}`);
+        console.log(`[${EXTENSION_ID}] storageDirectory: ${storageDirectory}`);
         console.log(`[${EXTENSION_ID}] python: ${pythonPath}`);
         console.log(`[${EXTENSION_ID}] converter: ${converterPath}`);
         console.log(`[${EXTENSION_ID}] output gp5: ${gp5Path}`);
@@ -703,8 +911,7 @@ export const activate = async (activation: Activation) => {
 
         await openOutputFolder(gp5Path, report);
 
-        await writeReport(storageDirectory, report);
-
+        await writeReport(reportPath, report);
       } catch (error) {
         const message =
           error instanceof Error ? error.stack ?? error.message : String(error);
@@ -715,7 +922,8 @@ export const activate = async (activation: Activation) => {
 
         try {
           await fs.mkdir(storageDirectory, { recursive: true });
-          await writeReport(storageDirectory, report);
+          await writeReport(reportPath, report);
+          await openOutputFolder(reportPath, report);
         } catch {
           // Nothing else to do.
         }
