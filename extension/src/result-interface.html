@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Export termin&eacute;</title>
+  <script>
+    const resultData = JSON.parse(
+      decodeURIComponent("__ABLETON_TO_GP5_RESULT_DATA__")
+    );
+    const isWebKitMessageHandlerAvailable =
+      window.webkit &&
+      window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.live;
+    const isWebView2 = window.chrome && window.chrome.webview;
+
+    function sendMessage(message) {
+      if (isWebKitMessageHandlerAvailable) {
+        window.webkit.messageHandlers.live.postMessage(message);
+      } else if (isWebView2) {
+        window.chrome.webview.postMessage(message);
+      }
+    }
+
+    function closeWithAction(action) {
+      sendMessage({
+        method: "close_and_send",
+        params: [JSON.stringify({ action })]
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("file-name").textContent = resultData.fileName;
+      document.getElementById("folder-path").textContent = resultData.folder;
+      document.getElementById("track-count").textContent =
+        String(resultData.trackCount);
+      document.getElementById("note-count").textContent =
+        String(resultData.noteCount);
+
+      document.getElementById("close-button").addEventListener("click", () => {
+        closeWithAction("close");
+      });
+
+      document
+        .getElementById("open-folder-button")
+        .addEventListener("click", () => {
+          closeWithAction("open-folder");
+        });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeWithAction("close");
+        }
+      });
+
+      document.getElementById("open-folder-button").focus();
+    });
+  </script>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    * {
+      margin: 0;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    :root {
+      --c-bg: hsl(0, 0%, 21%);
+      --c-panel: hsl(0, 0%, 18%);
+      --c-control: hsl(0, 0%, 16%);
+      --c-control-hover: hsl(0, 0%, 13%);
+      --c-border: hsl(0, 0%, 7%);
+      --c-outline: hsl(0, 0%, 48%);
+      --c-text: hsl(0, 0%, 71%);
+      --c-text-secondary: hsl(0, 0%, 58%);
+      --c-accent: hsl(31, 100%, 67%);
+      --c-accent-hover: hsl(31, 100%, 62%);
+      --c-accent-text: hsl(0, 0%, 7%);
+      --c-success: hsl(150, 48%, 62%);
+    }
+
+    html,
+    body {
+      height: 100%;
+      background: var(--c-bg);
+      color: var(--c-text);
+      font-family: "AbletonSansSmall", sans-serif;
+      font-size: 11.5px;
+      font-weight: 500;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    main {
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--c-border);
+    }
+
+    .status-mark {
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--c-success);
+    }
+
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .result {
+      display: grid;
+      align-content: center;
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .file {
+      min-width: 0;
+      padding: 11px 12px;
+      border: 1px solid var(--c-border);
+      background: var(--c-panel);
+    }
+
+    .file-name {
+      overflow-wrap: anywhere;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .folder-path {
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+      color: var(--c-text-secondary);
+    }
+
+    .counts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border: 1px solid var(--c-border);
+      background: var(--c-panel);
+    }
+
+    .count {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: baseline;
+      gap: 7px;
+      padding: 10px 12px;
+    }
+
+    .count + .count {
+      border-left: 1px solid var(--c-border);
+    }
+
+    .count-value {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--c-success);
+    }
+
+    .count-label {
+      color: var(--c-text-secondary);
+    }
+
+    footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 14px 16px;
+      border-top: 1px solid var(--c-border);
+    }
+
+    .alx-button {
+      min-width: 86px;
+      height: 22px;
+      padding: 0 12px;
+      border: 1px solid var(--c-border);
+      border-radius: 11px;
+      outline: 0;
+      background: var(--c-control);
+      color: var(--c-text);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .alx-button:hover {
+      background: var(--c-control-hover);
+    }
+
+    .alx-button:focus {
+      outline: 2px solid var(--c-outline);
+    }
+
+    .alx-button--primary {
+      background: var(--c-accent);
+      color: var(--c-accent-text);
+    }
+
+    .alx-button--primary:hover {
+      background: var(--c-accent-hover);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="status-mark"></div>
+      <h1>Export termin&eacute;</h1>
+    </header>
+
+    <section class="result">
+      <div class="file">
+        <div class="file-name" id="file-name"></div>
+        <div class="folder-path" id="folder-path"></div>
+      </div>
+
+      <div class="counts">
+        <div class="count">
+          <div class="count-value" id="track-count"></div>
+          <div class="count-label">pistes export&eacute;es</div>
+        </div>
+        <div class="count">
+          <div class="count-value" id="note-count"></div>
+          <div class="count-label">notes export&eacute;es</div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <button class="alx-button" id="close-button" type="button">Fermer</button>
+      <button
+        class="alx-button alx-button--primary"
+        id="open-folder-button"
+        type="button"
+      >
+        Ouvrir le dossier
+      </button>
+    </footer>
+  </main>
+</body>
+</html>

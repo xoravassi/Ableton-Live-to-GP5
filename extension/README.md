@@ -1,22 +1,23 @@
-# ableton-live-to-gp5
+# Extension Development
 
-An Ableton Live extension built with `@ableton-extensions/sdk`.
+The user documentation is available in the
+[repository README](../README.md).
 
-## Get Started
+Run the extension in development:
 
-Learn about building extensions: https://ableton.github.io/extensions-sdk/
+```powershell
+npm install
+npm run start:gp5
+```
 
-## Setup
+Build the installable package:
 
-The path to Ableton Live's Extension Host module is stored in `.env` as
-`EXTENSION_HOST_PATH`. The generator filled this in for you; edit it if your
-install moves.
+```powershell
+npm run package:gp5
+```
 
-## Scripts
+The package is written to:
 
-```sh
-npm start                  # build + run in Live's Extension Host
-npm run build              # production bundle of src/extension.ts
-npm run build:dev          # dev bundle (sourcemaps, not minified)
-npm run package            # build for production + create a .ablx archive
+```text
+dist\Ableton-Live-to-GP5.ablx
 ```

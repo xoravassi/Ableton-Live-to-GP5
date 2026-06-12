@@ -1,9 +1,11 @@
 import * as path from "node:path";
 import exportDialogInterface from "./interface.html";
+import exportResultInterface from "./result-interface.html";
 import type {
   ExportDialogResult,
   ExportDialogTrack,
   ExportReport,
+  ExportResultDialogResult,
 } from "./export-types.js";
 
 function sanitizeFileName(name: string): string {
@@ -72,4 +74,37 @@ export async function showExportDialog(
   if (result.action !== "export") return null;
 
   return getBaseNameFromPathOrName(result.name) ?? null;
+}
+
+export async function showExportResultDialog(
+  context: any,
+  gp5Path: string,
+  trackCount: number,
+  noteCount: number
+): Promise<boolean> {
+  const dataMarker = "__ABLETON_TO_GP5_RESULT_DATA__";
+
+  if (!exportResultInterface.includes(dataMarker)) {
+    throw new Error(
+      "Export result data marker is missing from result-interface.html."
+    );
+  }
+
+  const payload = encodeURIComponent(
+    JSON.stringify({
+      fileName: path.basename(gp5Path),
+      folder: path.dirname(gp5Path),
+      trackCount,
+      noteCount,
+    })
+  );
+  const dialogHtml = exportResultInterface.replace(dataMarker, payload);
+  const dialogUrl = `data:text/html;charset=utf-8,${encodeURIComponent(dialogHtml)}`;
+  const rawResult = await context.ui.showModalDialog(dialogUrl, 520, 300);
+
+  if (!rawResult) return false;
+
+  const result = JSON.parse(rawResult) as ExportResultDialogResult;
+
+  return result.action === "open-folder";
 }

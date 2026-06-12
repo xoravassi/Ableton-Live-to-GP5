@@ -2,7 +2,10 @@ import { initialize } from "@ableton-extensions/sdk";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { buildExportData, buildExportDialogTracks } from "./export-data.js";
-import { showExportDialog } from "./export-dialog.js";
+import {
+  showExportDialog,
+  showExportResultDialog,
+} from "./export-dialog.js";
 import {
   checkPythonEnvironment,
   createVersionedExportPaths,
@@ -155,7 +158,30 @@ export const activate = async (activation: Activation) => {
 
       console.log(`[${EXTENSION_ID}] GP5 written: ${gp5Path}`);
 
-      await openOutputFolder(gp5Path, report);
+      let shouldOpenOutputFolder = true;
+
+      try {
+        shouldOpenOutputFolder = await showExportResultDialog(
+          context,
+          gp5Path,
+          exportData.tracks.length,
+          report.notesExported
+        );
+      } catch (dialogError) {
+        const dialogMessage =
+          dialogError instanceof Error
+            ? dialogError.message
+            : String(dialogError);
+
+        report.warnings.push(
+          `GP5 export succeeded, but the result dialog failed: ${dialogMessage}`
+        );
+      }
+
+      if (shouldOpenOutputFolder) {
+        await openOutputFolder(gp5Path, report);
+      }
+
       await writeReport(reportPath, report);
     } catch (error) {
       const message =

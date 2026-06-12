@@ -81,3 +81,7 @@ export type ExportDialogResult = {
   action: "export" | "cancel";
   name?: string;
 };
+
+export type ExportResultDialogResult = {
+  action: "close" | "open-folder";
+};
