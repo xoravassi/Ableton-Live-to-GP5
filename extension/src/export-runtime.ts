@@ -5,12 +5,24 @@ import { promisify } from "node:util";
 import converterSource from "../python/ableton_to_gp5.py";
 import type {
   ConversionReport,
+  DependencyStatus,
   ExportReport,
   VersionedExportPaths,
 } from "./export-types.js";
 
 const execFileAsync = promisify(execFile);
 const EXTENSION_ID = "ableton-live-to-gp5";
+
+export type PythonCommand = {
+  executable: string;
+  prefixArgs: string[];
+  label: string;
+};
+
+export type DependencyInspection = {
+  status: DependencyStatus;
+  python?: PythonCommand;
+};
 
 function sanitizeFileName(name: string): string {
   return name
@@ -79,18 +91,252 @@ export async function createVersionedExportPaths(
   };
 }
 
-export async function resolvePythonPath(repoRoot: string): Promise<string> {
-  const localPython = path.join(repoRoot, ".venv", "Scripts", "python.exe");
+function quoteCommandPart(value: string): string {
+  return /\s|"/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+}
 
-  if (process.env.PYTHON_PATH) {
-    return process.env.PYTHON_PATH;
-  }
+function displayCommand(command: PythonCommand, args: string[]): string {
+  return [command.executable, ...command.prefixArgs, ...args]
+    .map(quoteCommandPart)
+    .join(" ");
+}
+
+async function discoverWindowsPythonCommands(): Promise<PythonCommand[]> {
+  if (process.platform !== "win32" || !process.env.LOCALAPPDATA) return [];
+
+  const root = path.join(process.env.LOCALAPPDATA, "Programs", "Python");
 
   try {
-    await fs.access(localPython);
-    return localPython;
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory() && /^Python/i.test(entry.name))
+      .sort((left, right) => right.name.localeCompare(left.name))
+      .map((entry) => {
+        const executable = path.join(root, entry.name, "python.exe");
+        return {
+          executable,
+          prefixArgs: [],
+          label: executable,
+        };
+      });
   } catch {
-    return "python";
+    return [];
+  }
+}
+
+async function pythonCandidates(repoRoot: string): Promise<PythonCommand[]> {
+  const candidates: PythonCommand[] = [];
+  const add = (executable: string, prefixArgs: string[] = []) => {
+    const label = [executable, ...prefixArgs].join(" ");
+    if (!candidates.some((candidate) => candidate.label === label)) {
+      candidates.push({ executable, prefixArgs, label });
+    }
+  };
+
+  if (process.env.PYTHON_PATH) add(process.env.PYTHON_PATH);
+
+  add(
+    path.join(
+      repoRoot,
+      ".venv",
+      process.platform === "win32" ? "Scripts" : "bin",
+      process.platform === "win32" ? "python.exe" : "python"
+    )
+  );
+
+  for (const command of await discoverWindowsPythonCommands()) {
+    add(command.executable, command.prefixArgs);
+  }
+
+  if (process.platform === "win32") add("py", ["-3"]);
+  add("python");
+  add("python3");
+
+  return candidates;
+}
+
+async function inspectCandidate(
+  command: PythonCommand
+): Promise<
+  | {
+      pythonVersion: string;
+      packageVersion?: string;
+      packageInstalled: boolean;
+    }
+  | null
+> {
+  const script = [
+    "import importlib.metadata, importlib.util, json, sys",
+    "installed = importlib.util.find_spec('guitarpro') is not None",
+    "print(json.dumps({'pythonVersion': sys.version.split()[0], 'packageInstalled': installed, 'packageVersion': importlib.metadata.version('PyGuitarPro') if installed else None}))",
+  ].join("; ");
+
+  try {
+    const { stdout } = await execFileAsync(
+      command.executable,
+      [...command.prefixArgs, "-c", script],
+      { timeout: 8_000 }
+    );
+    const lastLine = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+    if (!lastLine) return null;
+    return JSON.parse(lastLine);
+  } catch {
+    return null;
+  }
+}
+
+export async function inspectPythonEnvironment(
+  repoRoot: string,
+  previousError?: string
+): Promise<DependencyInspection> {
+  let missingPackage:
+    | {
+        command: PythonCommand;
+        pythonVersion: string;
+      }
+    | undefined;
+
+  for (const command of await pythonCandidates(repoRoot)) {
+    const result = await inspectCandidate(command);
+    if (!result) continue;
+
+    if (!result.packageInstalled) {
+      missingPackage ??= {
+        command,
+        pythonVersion: result.pythonVersion,
+      };
+      continue;
+    }
+
+    return {
+      python: command,
+      status: {
+        state: "ready",
+        pythonLabel: command.label,
+        pythonVersion: result.pythonVersion,
+        packageVersion: result.packageVersion,
+        title: "Ready to create a GP5 file",
+        description:
+          "Python and PyGuitarPro are installed. Continue to review the detected tracks and tablature mapping.",
+        canInstall: false,
+        commands: [],
+      },
+    };
+  }
+
+  if (missingPackage) {
+    const { command, pythonVersion } = missingPackage;
+
+    return {
+      python: command,
+      status: {
+        state: previousError ? "error" : "missing-package",
+        pythonLabel: command.label,
+        pythonVersion,
+        title: previousError
+          ? "Dependency installation failed"
+          : "PyGuitarPro is missing",
+        description:
+          "Python is available, but the GP5 writer package still needs to be installed.",
+        details: previousError,
+        canInstall: true,
+        commands: [
+          displayCommand(command, [
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "PyGuitarPro",
+          ]),
+        ],
+      },
+    };
+  }
+
+  const windowsCommands =
+    process.platform === "win32"
+      ? [
+          "winget install --exact --id Python.Python.3.12 --source winget --accept-package-agreements --accept-source-agreements",
+          "py -3 -m pip install --upgrade PyGuitarPro",
+        ]
+      : [];
+
+  return {
+    status: {
+      state: previousError ? "error" : "missing-python",
+      title: previousError
+        ? "Dependency installation failed"
+        : "Python is missing",
+      description:
+        process.platform === "win32"
+          ? "Python and PyGuitarPro are required to write Guitar Pro 5 files."
+          : "Install Python 3 and PyGuitarPro, then run the check again.",
+      details: previousError,
+      canInstall: windowsCommands.length > 0,
+      commands: windowsCommands,
+    },
+  };
+}
+
+export async function installMissingDependencies(
+  repoRoot: string,
+  inspection: DependencyInspection,
+  update?: (text: string, progress?: number) => Promise<void>
+): Promise<DependencyInspection> {
+  try {
+    let current = inspection;
+
+    if (!current.python) {
+      if (process.platform !== "win32") {
+        throw new Error(
+          "Automatic Python installation is currently supported on Windows only."
+        );
+      }
+
+      await update?.("Installing Python with Windows Package Manager...", 20);
+      await execFileAsync(
+        "winget",
+        [
+          "install",
+          "--exact",
+          "--id",
+          "Python.Python.3.12",
+          "--source",
+          "winget",
+          "--accept-package-agreements",
+          "--accept-source-agreements",
+        ],
+        { timeout: 10 * 60_000 }
+      );
+
+      await update?.("Detecting the new Python installation...", 65);
+      current = await inspectPythonEnvironment(repoRoot);
+      if (!current.python) {
+        throw new Error(
+          "Python was installed, but this Live process cannot detect it yet. Restart Ableton Live and try again."
+        );
+      }
+    }
+
+    await update?.("Installing PyGuitarPro and its dependencies...", 75);
+    await execFileAsync(
+      current.python.executable,
+      [
+        ...current.python.prefixArgs,
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "PyGuitarPro",
+      ],
+      { timeout: 5 * 60_000 }
+    );
+
+    await update?.("Verifying the Python environment...", 95);
+    return await inspectPythonEnvironment(repoRoot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return inspectPythonEnvironment(repoRoot, message);
   }
 }
 
@@ -107,7 +353,7 @@ export async function materializeConverter(
 }
 
 export async function checkPythonEnvironment(
-  pythonPath: string,
+  python: PythonCommand,
   report: ExportReport
 ) {
   const script = [
@@ -119,8 +365,8 @@ export async function checkPythonEnvironment(
 
   try {
     const { stdout, stderr } = await execFileAsync(
-      pythonPath,
-      ["-c", script],
+      python.executable,
+      [...python.prefixArgs, "-c", script],
       {
         timeout: 10_000,
       }
@@ -128,7 +374,7 @@ export async function checkPythonEnvironment(
 
     const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
 
-    report.pythonExecutable = pythonPath;
+    report.pythonExecutable = python.label;
     report.pythonCheckOutput = output;
 
     if (output) {
@@ -163,15 +409,19 @@ export async function checkPythonEnvironment(
 }
 
 export async function runConverter(
-  pythonPath: string,
+  python: PythonCommand,
   converterPath: string,
   jsonPath: string,
   gp5Path: string,
   storageDirectory: string
 ) {
-  return execFileAsync(pythonPath, [converterPath, jsonPath, gp5Path], {
-    cwd: storageDirectory,
-  });
+  return execFileAsync(
+    python.executable,
+    [...python.prefixArgs, converterPath, jsonPath, gp5Path],
+    {
+      cwd: storageDirectory,
+    }
+  );
 }
 
 export async function readConversionReport(

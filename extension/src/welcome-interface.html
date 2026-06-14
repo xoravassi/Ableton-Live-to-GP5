@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ableton Live to GP5</title>
+  <style>__ABLETON_TO_GP5_UI_STYLES__</style>
+  <script>
+    const dependencyStatus = JSON.parse(
+      decodeURIComponent("__ABLETON_TO_GP5_WELCOME_DATA__")
+    );
+    const isWebKitMessageHandlerAvailable =
+      window.webkit &&
+      window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.live;
+    const isWebView2 = window.chrome && window.chrome.webview;
+
+    function closeWithAction(action) {
+      const message = {
+        method: "close_and_send",
+        params: [JSON.stringify({ action })]
+      };
+
+      if (isWebKitMessageHandlerAvailable) {
+        window.webkit.messageHandlers.live.postMessage(message);
+      } else if (isWebView2) {
+        window.chrome.webview.postMessage(message);
+      }
+    }
+
+    function renderStatus() {
+      const checking = dependencyStatus.state === "checking";
+      const ready = dependencyStatus.state === "ready";
+      const error = dependencyStatus.state === "error";
+      const statusBadge = document.getElementById("status-badge");
+      const actionButton = document.getElementById("action-button");
+      const diagnostics = document.getElementById("diagnostics");
+      const commands = document.getElementById("commands");
+      const alert = document.getElementById("dependency-alert");
+      const requirementsContent =
+        document.getElementById("requirements-content");
+      const readyState = document.getElementById("ready-state");
+
+      document.getElementById("status-title").textContent =
+        dependencyStatus.title;
+      document.getElementById("status-description").textContent =
+        dependencyStatus.description;
+
+      if (checking) {
+        statusBadge.textContent = "Checking";
+        actionButton.hidden = true;
+        diagnostics.hidden = true;
+        document.getElementById("loading-state").hidden = false;
+        setTimeout(() => closeWithAction("check"), 650);
+        return;
+      }
+
+      document.getElementById("loading-state").hidden = true;
+      statusBadge.textContent = ready ? "Ready" : "Action required";
+      statusBadge.className =
+        "ui-badge " + (ready ? "ui-badge-success" : "ui-badge-warning");
+
+      if (ready) {
+        statusBadge.hidden = true;
+        requirementsContent.hidden = true;
+        readyState.hidden = false;
+        diagnostics.hidden = true;
+        actionButton.textContent = "Get started";
+        actionButton.className = "ui-button ui-button-cta";
+        actionButton.onclick = () => closeWithAction("continue");
+        actionButton.hidden = false;
+        actionButton.focus();
+        return;
+      }
+
+      const rows = [];
+      if (dependencyStatus.pythonVersion) {
+        rows.push(
+          ["Python", dependencyStatus.pythonVersion],
+          ["Executable", dependencyStatus.pythonLabel || "Detected"]
+        );
+      } else {
+        rows.push(["Python", "Not detected"]);
+      }
+      rows.push([
+        "PyGuitarPro",
+        dependencyStatus.packageVersion || (ready ? "Installed" : "Missing")
+      ]);
+
+      diagnostics.replaceChildren();
+      rows.forEach(([label, value]) => {
+        const row = document.createElement("div");
+        row.className =
+          "flex items-start justify-between gap-4 border-b py-2 last:border-0";
+        const key = document.createElement("span");
+        key.className = "text-xs text-muted-foreground";
+        key.textContent = label;
+        const content = document.createElement("span");
+        content.className = "max-w-[360px] text-right text-xs font-medium";
+        content.textContent = value;
+        row.append(key, content);
+        diagnostics.appendChild(row);
+      });
+      diagnostics.hidden = false;
+
+      if (dependencyStatus.commands.length > 0) {
+        commands.textContent = dependencyStatus.commands.join("\n");
+        document.getElementById("commands-card").hidden = false;
+      }
+
+      if (dependencyStatus.details) {
+        alert.className =
+          "ui-alert " + (error ? "ui-alert-destructive" : "ui-alert-warning");
+        document.getElementById("alert-title").textContent =
+          error ? "Installation error" : "Setup information";
+        document.getElementById("alert-description").textContent =
+          dependencyStatus.details;
+        alert.hidden = false;
+      }
+
+      if (dependencyStatus.canInstall) {
+        actionButton.textContent = "Install missing dependency";
+        actionButton.className = "ui-button ui-button-primary";
+        actionButton.onclick = () => closeWithAction("install");
+      } else {
+        actionButton.textContent = "Run check again";
+        actionButton.className = "ui-button ui-button-outline";
+        actionButton.onclick = () => closeWithAction("check");
+      }
+      actionButton.hidden = false;
+      actionButton.focus();
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document
+        .getElementById("cancel-button")
+        .addEventListener("click", () => closeWithAction("cancel"));
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeWithAction("cancel");
+      });
+      renderStatus();
+    });
+  </script>
+</head>
+<body>
+  <div class="ui-shell">
+    <main class="ui-frame max-w-2xl">
+      <header class="ui-header">
+        <div class="ui-title-group">
+          <h1 class="ui-title">Ableton Live to GP5</h1>
+          <p class="ui-description">
+            Convert Arrangement MIDI tracks into an editable Guitar Pro 5 score.
+          </p>
+        </div>
+        <span class="ui-badge ui-badge-secondary" id="status-badge">
+          Checking
+        </span>
+      </header>
+
+      <section class="ui-content welcome-content">
+        <div class="grid gap-4">
+          <article class="ui-card welcome-card">
+            <div id="requirements-content">
+              <div class="ui-card-header">
+                <h2 class="ui-card-title" id="status-title">
+                  Checking export requirements
+                </h2>
+                <p class="ui-card-description" id="status-description">
+                  Detecting Python and the package used to write GP5 files.
+                </p>
+              </div>
+              <div class="ui-card-content">
+                <div class="grid gap-3" id="loading-state">
+                  <div class="flex items-center gap-3 text-sm text-muted-foreground">
+                    <div class="ui-spinner" aria-hidden="true"></div>
+                    <span>Running environment diagnostics...</span>
+                  </div>
+                  <div class="ui-progress" role="progressbar">
+                    <div class="ui-progress-indicator w-2/3 animate-pulse"></div>
+                  </div>
+                </div>
+                <div id="diagnostics" hidden></div>
+              </div>
+            </div>
+
+            <div class="ready-state" id="ready-state" hidden>
+              <img
+                class="welcome-image-slot"
+                src="__ABLETON_TO_GP5_COVER_IMAGE__"
+                alt="Ableton Live to Guitar Pro"
+              >
+            </div>
+          </article>
+
+          <div class="ui-alert ui-alert-warning" id="dependency-alert" hidden>
+            <div class="ui-alert-title" id="alert-title"></div>
+            <div class="ui-alert-description" id="alert-description"></div>
+          </div>
+
+          <article class="ui-card" id="commands-card" hidden>
+            <div class="ui-card-header">
+              <h2 class="ui-card-title">Commands that will be executed</h2>
+              <p class="ui-card-description">
+                Installation starts only after you press the button below.
+              </p>
+            </div>
+            <div class="ui-card-content">
+              <pre class="ui-code" id="commands"></pre>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <footer class="ui-footer">
+        <p class="text-xs text-muted-foreground">
+          No project data is modified during this check.
+        </p>
+        <div class="ui-actions">
+          <button class="ui-button ui-button-outline" id="cancel-button">
+            Cancel
+          </button>
+          <button class="ui-button ui-button-cta" id="action-button" hidden>
+            Get started
+          </button>
+        </div>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

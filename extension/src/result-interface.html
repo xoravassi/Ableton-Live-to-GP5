@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -89,7 +89,7 @@
       document.getElementById("open-folder-button").focus();
     });
   </script>
-  <style>
+  <style media="not all">
     *, *::before, *::after {
       box-sizing: border-box;
     }
@@ -301,44 +301,70 @@
       box-shadow: none;
     }
   </style>
+  <style>__ABLETON_TO_GP5_UI_STYLES__</style>
 </head>
 <body>
-  <main>
-    <header>
-      <div class="status-mark" aria-hidden="true"></div>
-      <h1>Export complete</h1>
-    </header>
-
-    <section class="result">
-      <div class="file">
-        <div class="file-name" id="file-name"></div>
-        <div class="folder-path" id="folder-path"></div>
-      </div>
-
-      <div class="counts">
-        <div class="count">
-          <div class="count-value" id="track-count"></div>
-          <div class="count-label" id="track-label"></div>
+  <div class="ui-shell">
+    <main class="ui-frame result-layout">
+      <header class="ui-header justify-start">
+        <div class="status-mark" aria-hidden="true"></div>
+        <div class="ui-title-group">
+          <h1 class="ui-title">Export complete</h1>
+          <p class="ui-description">
+            The Guitar Pro 5 score has been written successfully.
+          </p>
         </div>
-        <div class="count">
-          <div class="count-value" id="note-count"></div>
-          <div class="count-label" id="note-label"></div>
+      </header>
+
+      <section class="ui-content result">
+        <article class="file">
+          <div class="file-name" id="file-name"></div>
+          <div class="folder-path" id="folder-path"></div>
+        </article>
+
+        <div class="counts">
+          <div class="count">
+            <div class="count-value" id="track-count"></div>
+            <div class="count-label" id="track-label"></div>
+          </div>
+          <div class="count">
+            <div class="count-value" id="note-count"></div>
+            <div class="count-label" id="note-label"></div>
+          </div>
         </div>
-      </div>
 
-      <div class="result-warning" id="result-warning" role="status" hidden></div>
-    </section>
+        <div
+          class="result-warning"
+          id="result-warning"
+          role="status"
+          hidden
+        ></div>
+      </section>
 
-    <footer>
-      <button class="alx-button" id="close-button" type="button">Close</button>
-      <button
-        class="alx-button alx-button--primary"
-        id="open-folder-button"
-        type="button"
-      >
-        Open folder
-      </button>
-    </footer>
-  </main>
+      <footer class="ui-footer">
+        <p class="text-xs text-muted-foreground">
+          The JSON export and report are stored in the same folder.
+        </p>
+        <div class="ui-actions">
+          <button
+            class="ui-button ui-button-outline"
+            id="close-button"
+            type="button"
+            data-slot="button"
+          >
+            Close
+          </button>
+          <button
+            class="ui-button ui-button-primary"
+            id="open-folder-button"
+            type="button"
+            data-slot="button"
+          >
+            Open folder
+          </button>
+        </div>
+      </footer>
+    </main>
+  </div>
 </body>
 </html>

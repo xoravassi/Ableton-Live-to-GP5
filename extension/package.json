@@ -7,7 +7,8 @@
   },
   "type": "module",
   "scripts": {
-    "build:dev": "tsc --noEmit && tsx build.ts",
+    "build:styles": "tailwindcss -i src/ui.css -o src/ui.generated.css --minify",
+    "build:dev": "npm run build:styles && tsc --noEmit && tsx build.ts",
     "test:planner": "tsx tests/export-planner.test.ts",
     "test:midi-extraction": "tsx tests/midi-extraction.test.ts",
     "test:browser-planner": "tsx tests/planner-browser.test.ts",
@@ -22,8 +23,11 @@
   },
   "devDependencies": {
     "@ableton-extensions/cli": "file:./vendor/ableton-extensions-cli-1.0.0-beta.0.tgz",
+    "@tailwindcss/cli": "^4.3.1",
     "@types/node": "^24.1.0",
     "esbuild": "0.28.0",
+    "tailwindcss": "^4.3.1",
     "tsx": "^4.19.0",
-    "typescript": "^5.9.3"  }
+    "typescript": "^5.9.3"
+  }
 }

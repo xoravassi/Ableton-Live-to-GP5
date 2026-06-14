@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -87,6 +87,17 @@
       return value + " " + (value === 1 ? singular : plural);
     }
 
+    function formatInstrumentType(kind, fallback) {
+      const labels = {
+        guitar: "Guitar",
+        guitar7: "7-string guitar",
+        bass: "Bass",
+        drums: "Drums"
+      };
+
+      return labels[kind] || fallback || "Instrument";
+    }
+
     function resolvePlanOption(track, kind, globalShift) {
       const options = track.planOptions || [];
 
@@ -158,7 +169,7 @@
 
       exportButton.disabled = !ready;
       exportButton.textContent =
-        pendingTracks.size > 0 ? "Updating..." : "Export";
+        pendingTracks.size > 0 ? "Updating..." : "Export GP5";
     }
 
     function showPlannerError(message) {
@@ -207,7 +218,7 @@
 
     function createSelect(className, ariaLabel, options) {
       const select = document.createElement("select");
-      select.className = "alx-select " + className;
+      select.className = "ui-select " + className;
       select.setAttribute("aria-label", ariaLabel);
 
       options.forEach(({ value, label }) => {
@@ -224,7 +235,7 @@
       const trackList = document.getElementById("track-list");
       trackList.replaceChildren();
       const statusLabels = {
-        exported: "Exported",
+        exported: "Will be exported",
         muted: "Muted",
         ignored: "Ignored",
         empty: "No notes"
@@ -257,10 +268,12 @@
         title.appendChild(name);
         let instrument = null;
 
-        if (track.instrument) {
+        if (track.instrument || track.drumSummary) {
           instrument = document.createElement("span");
-          instrument.className = "track-instrument";
-          instrument.textContent = track.instrument;
+          instrument.className = "ui-badge track-instrument";
+          instrument.textContent = track.drumSummary
+            ? formatInstrumentType("drums")
+            : track.instrument;
           title.appendChild(instrument);
         }
 
@@ -310,7 +323,10 @@
             if (!option) return;
 
             if (instrument) {
-              instrument.textContent = option.instrument;
+              instrument.textContent = formatInstrumentType(
+                option.kind,
+                option.instrument
+              );
             }
             detail.textContent = formatTrackPlanDetail(track, option);
 
@@ -359,7 +375,10 @@
           const initialOption = selectedOptionForPreparedTrack(track);
 
           if (initialOption) {
-            instrument.textContent = initialOption.instrument;
+            instrument.textContent = formatInstrumentType(
+              initialOption.kind,
+              initialOption.instrument
+            );
             detail.textContent = formatTrackPlanDetail(track, initialOption);
           }
         } else {
@@ -368,9 +387,10 @@
         }
 
         const status = document.createElement("div");
-        status.className = "track-status track-status--" + track.status;
+        status.className =
+          "ui-badge track-status track-status--" + track.status;
         status.textContent = track.drumSummary
-          ? "Drums"
+          ? "Will be exported"
           : statusLabels[track.status];
 
         const count = document.createElement("div");
@@ -481,7 +501,7 @@
       });
     });
   </script>
-  <style>
+  <style media="not all">
     *, *::before, *::after {
       box-sizing: border-box;
     }
@@ -949,76 +969,149 @@
       opacity: 0.65;
     }
   </style>
+  <style>__ABLETON_TO_GP5_UI_STYLES__</style>
 </head>
 <body>
-  <main>
-    <header>
-      <div class="device-indicator" aria-hidden="true"></div>
-      <h1>Export to GP5</h1>
-      <div class="summary" id="summary"></div>
-    </header>
-
-    <section class="name-section">
-      <form id="export-form">
-        <label for="export-name">Export name</label>
-        <input
-          class="alx-input"
-          id="export-name"
-          name="export-name"
-          type="text"
-          maxlength="80"
-          autocomplete="off"
-          spellcheck="false"
-          required
-        >
-      </form>
-      <div class="name-help">
-        The Extensions SDK cannot access the Live Set filename. Enter a name
-        for this export.
-      </div>
-    </section>
-
-    <section class="tracks-section">
-      <h2 class="section-heading">Arrangement MIDI tracks</h2>
-      <div class="loading-panel" id="loading-panel" role="status">
-        <div class="loading-content">
-          <div class="loading-visual" aria-hidden="true">
-            <span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span>
-          </div>
-          <div class="loading-title" id="loading-title">
-            Preparing tablature
-          </div>
-          <div class="loading-detail" id="loading-detail">
-            Reading MIDI registers and testing standard instruments
-          </div>
-          <div class="loading-progress" id="loading-progress">
-            <div
-              class="loading-progress-fill"
-              id="loading-progress-fill"
-            ></div>
-          </div>
-          <div class="loading-count" id="loading-count">
-            Starting planner
-          </div>
+  <div class="ui-shell">
+    <main class="ui-frame export-layout">
+      <header class="ui-header" data-slot="dialog-header">
+        <div class="ui-title-group">
+          <h1 class="ui-title" data-slot="dialog-title">Review GP5 export</h1>
+          <p class="ui-description" data-slot="dialog-description">
+            Confirm the score name, instrument choices and octave mapping.
+          </p>
         </div>
-      </div>
-      <div class="track-list" id="track-list" role="list" hidden></div>
-    </section>
+        <div
+          class="ui-badge ui-badge-secondary summary"
+          id="summary"
+          data-slot="badge"
+        ></div>
+      </header>
 
-    <footer>
-      <button class="alx-button" id="cancel-button" type="button">Cancel</button>
-      <button
-        class="alx-button alx-button--primary"
-        id="export-button"
-        type="submit"
-        form="export-form"
-        disabled
-      >
-        Export
-      </button>
-    </footer>
-  </main>
+      <section class="ui-content export-content ui-scroll">
+        <div class="export-grid">
+          <article class="ui-card export-details-card" data-slot="card">
+            <div class="ui-card-header" data-slot="card-header">
+              <h2 class="ui-card-title" data-slot="card-title">
+                Export details
+              </h2>
+              <p class="ui-card-description" data-slot="card-description">
+                Choose the filename used for the GP5 score and diagnostics.
+              </p>
+            </div>
+            <div class="ui-card-content" data-slot="card-content">
+              <form class="ui-field" id="export-form">
+                <label class="ui-label" for="export-name">Export name</label>
+                <input
+                  class="ui-input"
+                  id="export-name"
+                  name="export-name"
+                  type="text"
+                  maxlength="80"
+                  autocomplete="off"
+                  spellcheck="false"
+                  required
+                  data-slot="input"
+                >
+                <p class="ui-description">
+                  Live does not expose the Set filename to extensions.
+                </p>
+              </form>
+            </div>
+          </article>
+
+          <article class="ui-card tracks-card" data-slot="card">
+            <div
+              class="ui-card-header tracks-card-header"
+              data-slot="card-header"
+            >
+              <div>
+                <h2 class="ui-card-title" data-slot="card-title">
+                  Arrangement MIDI tracks
+                </h2>
+                <p class="ui-card-description" data-slot="card-description">
+                  Review the standardized instrument and octave mapping for
+                  every detected track.
+                </p>
+              </div>
+              <span
+                class="ui-badge ui-badge-outline"
+                data-slot="badge"
+              >GP5</span>
+            </div>
+
+            <div
+              class="ui-card-content tracks-card-content"
+              data-slot="card-content"
+            >
+              <div class="loading-panel" id="loading-panel" role="status">
+                <div class="loading-content">
+                  <div class="loading-heading">
+                    <div class="ui-spinner" aria-hidden="true"></div>
+                    <div>
+                      <div class="loading-title" id="loading-title">
+                        Preparing tablature
+                      </div>
+                      <div class="loading-detail" id="loading-detail">
+                        Reading MIDI registers and testing standard instruments
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    class="ui-progress"
+                    id="loading-progress"
+                    role="progressbar"
+                    data-slot="progress"
+                  >
+                    <div
+                      class="ui-progress-indicator loading-progress-fill"
+                      id="loading-progress-fill"
+                      data-slot="progress-indicator"
+                    ></div>
+                  </div>
+                  <div class="loading-count" id="loading-count">
+                    Starting planner
+                  </div>
+                </div>
+              </div>
+              <div
+                class="track-list ui-scroll"
+                id="track-list"
+                role="list"
+                data-slot="scroll-area"
+                hidden
+              ></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <footer class="ui-footer" data-slot="dialog-footer">
+        <p class="text-xs text-muted-foreground">
+          The source Live Set remains unchanged.
+        </p>
+        <div class="ui-actions">
+          <button
+            class="ui-button ui-button-outline"
+            id="cancel-button"
+            type="button"
+            data-slot="button"
+          >
+            Cancel
+          </button>
+          <button
+            class="ui-button ui-button-cta"
+            id="export-button"
+            type="submit"
+            form="export-form"
+            data-slot="button"
+            disabled
+          >
+            Export GP5
+          </button>
+        </div>
+      </footer>
+    </main>
+  </div>
 </body>
 </html>

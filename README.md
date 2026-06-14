@@ -1,112 +1,93 @@
 # Ableton Live to GP5
 
-Ableton Live extension that exports MIDI clips from the Arrangement View to a
-Guitar Pro 5 (`.gp5`) file.
+![Ableton Live to Guitar Pro](extension/src/assets/cover.png)
 
-## Requirements
+Convert MIDI clips from Ableton Live's Arrangement View into an editable
+Guitar Pro 5 (`.gp5`) score.
 
-- Ableton Live 12 with Extensions support
-- Python 3 available from the `python` command
-- [PyGuitarPro](https://github.com/Perlence/PyGuitarPro)
+The extension automatically:
 
-Install the Python dependency once:
-
-```powershell
-python -m pip install PyGuitarPro
-```
-
-Verify the installation:
-
-```powershell
-python -c "import guitarpro; print(guitarpro.__file__)"
-```
+- chooses a standard guitar, 7-string guitar or bass for each track;
+- moves out-of-range notes by octaves when needed;
+- exports supported drums to a real Guitar Pro percussion track;
+- lets you review every instrument and octave choice before export.
 
 ## Install
 
 1. Download `Ableton-Live-to-GP5.ablx` from the
-   [latest GitHub release](https://github.com/xoravassi/Ableton-Live-to-GP5/releases/latest).
-2. Open the `.ablx` file to install the extension in Ableton Live.
-3. Restart Ableton Live if the action does not appear immediately.
+   [latest release](https://github.com/xoravassi/Ableton-Live-to-GP5/releases/latest).
+2. Open the downloaded file.
+3. Restart Ableton Live if **Convert to GP5** does not appear immediately.
 
-## Export
+## First Launch
 
-1. Open a Live Set containing MIDI clips in the Arrangement View.
+The extension needs Python and PyGuitarPro to create GP5 files.
+
+It checks them automatically when it starts. On Windows, if something is
+missing, select **Install missing dependency**. The commands are shown before
+anything is installed.
+
+When the check is complete, select **Get started**.
+
+## Export a Live Set
+
+1. Open a Live Set with MIDI clips in Arrangement View.
 2. Right-click a MIDI clip or MIDI track.
 3. Select **Convert to GP5**.
-4. Review the detected stringed instruments, octave corrections and drum
-   mappings, then enter the export name.
-5. Click **Export**.
+4. Select **Get started** after the automatic check.
+5. Review the suggested instruments and octave changes.
+6. Enter an export name and select **Export GP5**.
 
-The export window opens before tablature planning begins. A preparation view
-shows the current track and note count while the extension evaluates the
-standard instruments and octave placements.
+When the export is complete, select **Open folder** to find the GP5 file.
 
-After conversion, Ableton displays the generated filename and the number of
-tracks and notes. Click **Open folder** to access the `.gp5` file.
+## What Is Exported
 
-On Windows, exports are stored in Ableton's extension data directory:
+- MIDI clips from Arrangement View
+- Looped clips, expanded to their full Arrangement length
+- Standard 6-string guitar, 7-string guitar and 4-string bass tablatures
+- Kick, snare, closed/open/pedal hi-hat, ride, ride bell and crash cymbal
+
+Session View clips and manually muted tracks or clips are not exported.
+
+## Export Folder
+
+On Windows, files are normally stored here:
 
 ```text
 %LOCALAPPDATA%\Ableton\Extensions Data\vassi.ableton-live-to-gp5
 ```
 
-The export folder also contains JSON reports that can help diagnose a
-conversion.
+Each export includes the GP5 file and small diagnostic files. You can ignore
+the diagnostic files unless an export needs troubleshooting.
 
-## Export Rules
+## Current Limitations
 
-- Only Arrangement View clips are exported.
-- Session View clips are ignored.
-- Looped clips are expanded to their Arrangement duration.
-- Explicitly muted tracks and clips are ignored.
-- Tracks muted only by Ableton's solo state are still exported.
-- Detected drum elements are exported as real Guitar Pro percussion tracks
-  instead of muted guitar tablatures.
-- Drum Rack pads are matched from their receiving MIDI note to the sample
-  loaded in Simpler. Detection prioritizes the sample filename, then device,
-  clip and Ableton track names.
-- Kick names such as `kick`, `bd` and `bass drum` map to General MIDI 36.
-  Snare names such as `snare`, `snr` and `sd` map to General MIDI 38.
-- Hi-hats preserve their articulation when the sample name is explicit:
-  closed `42`, pedal/foot `44`, and open `46`. An ambiguous `hihat`, `hat` or
-  `HH` is treated as closed.
-- Ride maps to `51`, ride bell to `53`, and crash cymbal to `49`.
-- Standard General MIDI pitches for all supported elements are used as a final
-  fallback, but only after the track has already been identified as
-  percussion.
-- Duplicate hits of the same drum element on the same exported time grid are
-  merged. Unrecognized percussion elements are reported and omitted rather
-  than exported as an incorrect instrument.
-- Every track uses one standardized instrument: 6-string guitar in E standard,
-  7-string guitar in B standard, 4-string bass in E standard, or a GP5
-  percussion kit.
-- The planner simulates all three instruments and global octave offsets. It
-  prioritizes preserving every note, keeping chords in one octave, minimizing
-  individual corrections, and producing practical fret positions.
-- A global octave move is preferred over many isolated note changes. Remaining
-  outliers are moved by octaves at the chord/event level whenever possible.
-- Dense chords can use Guitar Pro's second voice so the same string may be used
-  once per voice instead of dropping a note.
-- The export dialog shows the recommendation and lets each track override the
-  instrument and global octave before conversion.
-- The conversion report records the selected plan, octave adjustments, voices
-  used, and any note that still could not be placed.
-- The completion dialog uses the converter's verified written/skipped note
-  counts instead of only reporting the number of input MIDI notes.
+- Timing is rounded to the nearest 1/32 note.
+- Tuplets, groove, automation, articulations and MPE are not preserved.
+- Claps, toms and unsupported percussion are currently omitted.
+- Drum detection works best when tracks, Drum Rack pads or samples have clear
+  names such as `kick`, `snare`, `hihat`, `ride` or `crash`.
+- Ableton does not provide the Live Set filename to the extension, so the
+  export name must be entered manually.
 
-## Limitations
+## Troubleshooting
 
-- MIDI note positions and durations are quantized to the nearest 1/32 note.
-  Tuplets, groove and complex overlaps are not preserved exactly.
-- Complex tuplets, articulations, automation and MPE are not exported.
-- Drum conversion currently recognizes kick, snare, closed/pedal/open hi-hat,
-  ride, ride bell and crash. Claps, toms and other percussion elements are
-  reported but not yet written.
-- Simpler sample paths and Drum Rack chains are supported by the current Live
-  Extensions SDK. Sampler and third-party plug-ins may expose only a device,
-  clip or track name, so detection can be less precise for those devices.
-- The extension does not receive the Live Set filename from the current SDK,
-  so the export name is entered manually.
+**Convert to GP5 is missing**
+
+Restart Ableton Live after installing the `.ablx` file.
+
+**The dependency check fails**
+
+Install PyGuitarPro manually, then restart Ableton Live:
+
+```powershell
+python -m pip install --upgrade PyGuitarPro
+```
+
+**A drum is missing or incorrect**
+
+Rename the Ableton track, Drum Rack pad or sample so that it clearly contains
+the instrument name.
 
 ## Development
 
@@ -117,16 +98,16 @@ npm --prefix extension install
 npm --prefix extension run start:gp5
 ```
 
-Build the installable package:
-
-```powershell
-npm --prefix extension run package:gp5
-```
-
-Run the planner, Ableton extraction and converter tests:
+Run the tests:
 
 ```powershell
 npm --prefix extension test
+```
+
+Build the installable extension:
+
+```powershell
+npm --prefix extension run package:gp5
 ```
 
 Output:

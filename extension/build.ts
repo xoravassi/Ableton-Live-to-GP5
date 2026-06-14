@@ -4,6 +4,12 @@ import * as fs from "node:fs";
 const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
 const production = process.argv.includes("--production");
 const plannerMarker = "__ABLETON_TO_GP5_PLANNER_RUNTIME_SOURCE__";
+const stylesMarker = "__ABLETON_TO_GP5_UI_STYLES__";
+const coverMarker = "__ABLETON_TO_GP5_COVER_IMAGE__";
+const uiStyles = fs.readFileSync("src/ui.generated.css", "utf8");
+const coverImage = `data:image/png;base64,${fs
+  .readFileSync("src/assets/cover.png")
+  .toString("base64")}`;
 const plannerRuntime = await esbuild.build({
   entryPoints: ["src/planner-browser.ts"],
   bundle: true,
@@ -16,20 +22,32 @@ const plannerRuntime = await esbuild.build({
 const plannerRuntimeSource = plannerRuntime.outputFiles[0].text;
 
 const interfacePlugin: esbuild.Plugin = {
-  name: "embed-planner-worker",
+  name: "embed-webview-assets",
   setup(build) {
-    build.onLoad({ filter: /(^|[\\/])interface\.html$/ }, (args) => {
-      const html = fs.readFileSync(args.path, "utf8");
+    build.onLoad({ filter: /\.html$/ }, (args) => {
+      let html = fs.readFileSync(args.path, "utf8");
+      html = html.replace(
+        /<style media="not all">[\s\S]*?<\/style>\s*/g,
+        ""
+      );
 
-      if (!html.includes(plannerMarker)) {
-        throw new Error(`Planner worker marker missing from ${args.path}`);
+      if (!html.includes(stylesMarker)) {
+        throw new Error(`UI styles marker missing from ${args.path}`);
+      }
+
+      html = html.replace(stylesMarker, uiStyles);
+      html = html.replace(coverMarker, coverImage);
+
+      if (/(^|[\\/])interface\.html$/.test(args.path)) {
+        if (!html.includes(plannerMarker)) {
+          throw new Error(`Planner worker marker missing from ${args.path}`);
+        }
+
+        html = html.replace(plannerMarker, plannerRuntimeSource);
       }
 
       return {
-        contents: html.replace(
-          plannerMarker,
-          plannerRuntimeSource
-        ),
+        contents: html,
         loader: "text",
       };
     });

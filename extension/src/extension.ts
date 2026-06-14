@@ -10,18 +10,24 @@ import {
 import {
   showExportDialog,
   showExportResultDialog,
+  showWelcomeDialog,
 } from "./export-dialog.js";
 import {
   checkPythonEnvironment,
   createVersionedExportPaths,
+  inspectPythonEnvironment,
+  installMissingDependencies,
   materializeConverter,
   openOutputFolder,
   readConversionReport,
-  resolvePythonPath,
   runConverter,
   writeReport,
 } from "./export-runtime.js";
-import type { ExportReport } from "./export-types.js";
+import type { DependencyInspection } from "./export-runtime.js";
+import type {
+  DependencyStatus,
+  ExportReport,
+} from "./export-types.js";
 import { findArrangementMidiClips } from "./midi-extraction.js";
 
 const EXTENSION_ID = "ableton-live-to-gp5";
@@ -86,17 +92,128 @@ export const activate = async (activation: Activation) => {
 
       await fs.mkdir(storageDirectory, { recursive: true });
 
-      const song = context.application.song as any;
-      const clips = findArrangementMidiClips(song, report);
-      const exportData = buildExportData(song, clips, report);
-      const dialogTracks = buildExportDialogTracks(
-        song,
-        clips,
-        exportData,
-        report
-      );
+      const extensionRoot = process.cwd();
+      const repoRoot = path.resolve(extensionRoot, "..");
+      const checkingStatus: DependencyStatus = {
+        state: "checking",
+        title: "Checking export requirements",
+        description:
+          "Detecting Python and the package used to write Guitar Pro 5 files.",
+        canInstall: false,
+        commands: [],
+      };
+      let dependencyInspection: DependencyInspection | null = null;
+      dependencyInspection = await (async () => {
+        let status = checkingStatus;
+
+        while (true) {
+          const welcomeResult = await showWelcomeDialog(
+            context,
+            tempDirectory,
+            status
+          );
+
+          if (welcomeResult.action === "cancel") return null;
+
+          if (welcomeResult.action === "check") {
+            const inspection = await inspectPythonEnvironment(repoRoot);
+            dependencyInspection = inspection;
+            status = inspection.status;
+            continue;
+          }
+
+          if (welcomeResult.action === "install") {
+            const currentInspection =
+              dependencyInspection ??
+              (await inspectPythonEnvironment(repoRoot));
+            const installed = await context.ui.withinProgressDialog(
+              "Installing export dependencies...",
+              { progress: 5 },
+              async (update, abortSignal) => {
+                if (abortSignal.aborted) return currentInspection;
+
+                return installMissingDependencies(
+                  repoRoot,
+                  currentInspection,
+                  async (text, progress) => {
+                    if (abortSignal.aborted) {
+                      throw new Error("Dependency installation cancelled.");
+                    }
+                    await update(text, progress);
+                  }
+                );
+              }
+            );
+
+            dependencyInspection =
+              installed as Awaited<
+                ReturnType<typeof inspectPythonEnvironment>
+              >;
+            status = dependencyInspection.status;
+            continue;
+          }
+
+          if (
+            welcomeResult.action === "continue" &&
+            dependencyInspection?.python &&
+            dependencyInspection.status.state === "ready"
+          ) {
+            return dependencyInspection;
+          }
+
+          dependencyInspection = await inspectPythonEnvironment(repoRoot);
+          status = dependencyInspection.status;
+        }
+      })();
+
+      if (!dependencyInspection?.python) {
+        console.log(`[${EXTENSION_ID}] export cancelled during setup`);
+        return;
+      }
+
+      const analysis = await context.ui.withinProgressDialog(
+        "Reading Arrangement MIDI...",
+        { progress: 5 },
+        async (update, abortSignal) => {
+          await update("Reading Arrangement clips and notes...", 20);
+          if (abortSignal.aborted) return null;
+
+          const song = context.application.song as any;
+          const clips = findArrangementMidiClips(song, report);
+
+          await update("Building standardized instrument tracks...", 55);
+          if (abortSignal.aborted) return null;
+
+          const exportData = buildExportData(song, clips, report);
+
+          await update("Preparing the tablature review...", 85);
+          if (abortSignal.aborted) return null;
+
+          const dialogTracks = buildExportDialogTracks(
+            song,
+            clips,
+            exportData,
+            report
+          );
+
+          return { exportData, dialogTracks };
+        }
+      ) as
+        | {
+            exportData: ReturnType<typeof buildExportData>;
+            dialogTracks: ReturnType<typeof buildExportDialogTracks>;
+          }
+        | null;
+
+      if (!analysis) {
+        console.log(`[${EXTENSION_ID}] export cancelled during analysis`);
+        return;
+      }
+
+      const { exportData, dialogTracks } = analysis;
       const dialogResult = await showExportDialog(
         context,
+        tempDirectory,
         EXPORT_BASE_NAME,
         dialogTracks,
         report
@@ -163,21 +280,19 @@ export const activate = async (activation: Activation) => {
         return;
       }
 
-      const extensionRoot = process.cwd();
-      const repoRoot = path.resolve(extensionRoot, "..");
-      const pythonPath = await resolvePythonPath(repoRoot);
+      const python = dependencyInspection.python;
       const converterPath = await materializeConverter(tempDirectory);
 
       console.log(`[${EXTENSION_ID}] extensionRoot: ${extensionRoot}`);
       console.log(`[${EXTENSION_ID}] storageDirectory: ${storageDirectory}`);
-      console.log(`[${EXTENSION_ID}] python: ${pythonPath}`);
+      console.log(`[${EXTENSION_ID}] python: ${python.label}`);
       console.log(`[${EXTENSION_ID}] converter: ${converterPath}`);
       console.log(`[${EXTENSION_ID}] output gp5: ${gp5Path}`);
 
-      await checkPythonEnvironment(pythonPath, report);
+      await checkPythonEnvironment(python, report);
 
       const { stdout, stderr } = await runConverter(
-        pythonPath,
+        python,
         converterPath,
         jsonPath,
         gp5Path,
@@ -236,6 +351,7 @@ export const activate = async (activation: Activation) => {
       try {
         shouldOpenOutputFolder = await showExportResultDialog(
           context,
+          tempDirectory,
           gp5Path,
           resultSummary
         );

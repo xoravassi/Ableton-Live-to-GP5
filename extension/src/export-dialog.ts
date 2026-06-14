@@ -1,13 +1,18 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import exportDialogInterface from "./interface.html";
 import exportResultInterface from "./result-interface.html";
+import welcomeDialogInterface from "./welcome-interface.html";
 import type {
+  DependencyStatus,
   ExportDialogResult,
   ExportDialogSubmission,
   ExportDialogTrack,
   ExportReport,
   ExportResultSummary,
   ExportResultDialogResult,
+  WelcomeDialogResult,
 } from "./export-types.js";
 
 function sanitizeFileName(name: string): string {
@@ -59,15 +64,66 @@ function createExportDialogHtml(
   return exportDialogInterface.replace(dataMarker, payload);
 }
 
+async function showHtmlDialog(
+  context: any,
+  tempDirectory: string,
+  fileName: string,
+  html: string,
+  width: number,
+  height: number
+): Promise<string> {
+  await fs.mkdir(tempDirectory, { recursive: true });
+  const htmlPath = path.join(tempDirectory, fileName);
+  await fs.writeFile(htmlPath, html, "utf-8");
+  return context.ui.showModalDialog(pathToFileURL(htmlPath).href, width, height);
+}
+
+export async function showWelcomeDialog(
+  context: any,
+  tempDirectory: string,
+  status: DependencyStatus
+): Promise<WelcomeDialogResult> {
+  const dataMarker = "__ABLETON_TO_GP5_WELCOME_DATA__";
+
+  if (!welcomeDialogInterface.includes(dataMarker)) {
+    throw new Error(
+      "Welcome dialog data marker is missing from welcome-interface.html."
+    );
+  }
+
+  const html = welcomeDialogInterface.replace(
+    dataMarker,
+    encodeURIComponent(JSON.stringify(status))
+  );
+  const rawResult = await showHtmlDialog(
+    context,
+    tempDirectory,
+    "ableton-to-gp5-welcome.html",
+    html,
+    620,
+    560
+  );
+
+  if (!rawResult) return { action: "cancel" };
+  return JSON.parse(rawResult) as WelcomeDialogResult;
+}
+
 export async function showExportDialog(
   context: any,
+  tempDirectory: string,
   suggestedName: string,
   tracks: ExportDialogTrack[],
   report: ExportReport
 ): Promise<ExportDialogSubmission | null> {
   const dialogHtml = createExportDialogHtml(suggestedName, tracks, report);
-  const dialogUrl = `data:text/html;charset=utf-8,${encodeURIComponent(dialogHtml)}`;
-  const rawResult = await context.ui.showModalDialog(dialogUrl, 760, 680);
+  const rawResult = await showHtmlDialog(
+    context,
+    tempDirectory,
+    "ableton-to-gp5-export.html",
+    dialogHtml,
+    860,
+    800
+  );
 
   if (!rawResult) return null;
 
@@ -88,6 +144,7 @@ export async function showExportDialog(
 
 export async function showExportResultDialog(
   context: any,
+  tempDirectory: string,
   gp5Path: string,
   summary: ExportResultSummary
 ): Promise<boolean> {
@@ -107,8 +164,14 @@ export async function showExportResultDialog(
     })
   );
   const dialogHtml = exportResultInterface.replace(dataMarker, payload);
-  const dialogUrl = `data:text/html;charset=utf-8,${encodeURIComponent(dialogHtml)}`;
-  const rawResult = await context.ui.showModalDialog(dialogUrl, 520, 300);
+  const rawResult = await showHtmlDialog(
+    context,
+    tempDirectory,
+    "ableton-to-gp5-result.html",
+    dialogHtml,
+    560,
+    460
+  );
 
   if (!rawResult) return false;
 

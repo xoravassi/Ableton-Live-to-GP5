@@ -203,3 +203,19 @@ export type ExportDialogSubmission = {
 export type ExportResultDialogResult = {
   action: "close" | "open-folder";
 };
+
+export type DependencyStatus = {
+  state: "checking" | "ready" | "missing-python" | "missing-package" | "error";
+  pythonLabel?: string;
+  pythonVersion?: string;
+  packageVersion?: string;
+  title: string;
+  description: string;
+  details?: string;
+  canInstall: boolean;
+  commands: string[];
+};
+
+export type WelcomeDialogResult = {
+  action: "check" | "continue" | "install" | "cancel";
+};
