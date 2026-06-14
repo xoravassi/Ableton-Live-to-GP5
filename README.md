@@ -32,12 +32,12 @@ python -c "import guitarpro; print(guitarpro.__file__)"
 
 1. Open a Live Set containing MIDI clips in the Arrangement View.
 2. Right-click a MIDI clip or MIDI track.
-3. Select **Export to GP5**.
+3. Select **Convert to GP5**.
 4. Review the detected tracks and enter the export name.
-5. Click **Exporter**.
+5. Click **Export**.
 
 After conversion, Ableton displays the generated filename and the number of
-tracks and notes. Click **Ouvrir le dossier** to access the `.gp5` file.
+tracks and notes. Click **Open folder** to access the `.gp5` file.
 
 On Windows, exports are stored in Ableton's extension data directory:
 

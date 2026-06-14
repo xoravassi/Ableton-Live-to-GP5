@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Export Guitar Pro 5</title>
+  <title>Export to GP5</title>
   <script>
     const dialogData = JSON.parse(
       decodeURIComponent("__ABLETON_TO_GP5_DIALOG_DATA__")
@@ -41,18 +41,32 @@
       closeWithResult({ action: "export", name });
     }
 
+    function formatCount(value, singular, plural) {
+      return value + " " + (value === 1 ? singular : plural);
+    }
+
     function renderTracks() {
       const trackList = document.getElementById("track-list");
       const statusLabels = {
-        exported: "Export\u00e9e",
-        muted: "Muette dans GP5",
-        ignored: "Ignor\u00e9e",
-        empty: "Sans notes"
+        exported: "Exported",
+        muted: "Muted",
+        ignored: "Ignored",
+        empty: "No notes"
       };
+
+      if (dialogData.tracks.length === 0) {
+        const emptyState = document.createElement("div");
+        emptyState.className = "track-list-empty";
+        emptyState.setAttribute("role", "status");
+        emptyState.textContent = "No MIDI tracks found in the Arrangement.";
+        trackList.appendChild(emptyState);
+        return;
+      }
 
       dialogData.tracks.forEach((track) => {
         const row = document.createElement("div");
         row.className = "track-row";
+        row.setAttribute("role", "listitem");
 
         const description = document.createElement("div");
         description.className = "track-description";
@@ -72,7 +86,8 @@
         const count = document.createElement("div");
         count.className = "track-count";
         count.textContent =
-          track.clipCount + " clips / " + track.noteCount + " notes";
+          formatCount(track.clipCount, "clip", "clips") + " / " +
+          formatCount(track.noteCount, "note", "notes");
 
         description.appendChild(name);
         description.appendChild(detail);
@@ -89,10 +104,11 @@
       const summary = document.getElementById("summary");
 
       nameInput.value = dialogData.suggestedName;
-      summary.textContent =
-        dialogData.counts.exportedTracks + " pistes / " +
-        dialogData.counts.clips + " clips / " +
-        dialogData.counts.notes + " notes";
+      summary.textContent = [
+        formatCount(dialogData.counts.exportedTracks, "track", "tracks"),
+        formatCount(dialogData.counts.clips, "clip", "clips"),
+        formatCount(dialogData.counts.notes, "note", "notes")
+      ].join(" / ");
 
       renderTracks();
       nameInput.focus();
@@ -129,38 +145,51 @@
     }
 
     :root {
-      --p-live-ui-bg: hsl(0, 0%, 21%);
-      --p-live-control-bg: hsl(0, 0%, 16%);
-      --p-live-input-bg: hsl(0, 0%, 12%);
-      --p-live-text-primary: hsl(0, 0%, 71%);
-      --p-live-control-border: hsl(0, 0%, 7%);
-      --p-live-text-secondary: hsl(0, 0%, 48%);
-      --p-live-accent-primary: hsl(31, 100%, 67%);
-      --p-live-control-text-enabled: hsl(0, 0%, 7%);
+      /* Ableton Live 12 "Twenty-Four Carat" semantic colors. */
+      --live-desktop: #282828;
+      --live-surface: #343434;
+      --live-surface-area: #222222;
+      --live-surface-highlight: #474645;
+      --live-control: #1b1b1b;
+      --live-display: #141414;
+      --live-frame: #0d0d0d;
+      --live-text: #e1c69c;
+      --live-text-muted: #8c7f6c;
+      --live-text-subtle: #726c63;
+      --live-accent: #ffad56;
+      --live-accent-hover: #ffdd9f;
+      --live-selection: #ffdd9f;
+      --live-on-text: #040404;
+      --live-play: #00d38d;
+      --live-alert: #e76942;
+      --live-alternative: #03c3d5;
 
-      --c-bg: var(--p-live-ui-bg);
-      --c-panel: hsl(0, 0%, 18%);
-      --c-control: var(--p-live-control-bg);
-      --c-control-hover: hsl(0, 0%, 13%);
-      --c-input: var(--p-live-input-bg);
-      --c-border: var(--p-live-control-border);
-      --c-outline: var(--p-live-text-secondary);
-      --c-text: var(--p-live-text-primary);
-      --c-text-secondary: hsl(0, 0%, 58%);
-      --c-accent: var(--p-live-accent-primary);
-      --c-accent-text: var(--p-live-control-text-enabled);
-      --c-exported: hsl(150, 48%, 62%);
-      --c-muted: hsl(43, 90%, 68%);
-      --c-ignored: hsl(4, 66%, 69%);
-      --c-empty: hsl(0, 0%, 55%);
+      --c-bg: var(--live-surface);
+      --c-panel: var(--live-surface-area);
+      --c-panel-raised: var(--live-desktop);
+      --c-control: var(--live-control);
+      --c-control-hover: var(--live-surface-highlight);
+      --c-input: var(--live-display);
+      --c-border: var(--live-frame);
+      --c-divider: var(--live-desktop);
+      --c-outline: var(--live-selection);
+      --c-text: var(--live-text);
+      --c-text-secondary: var(--live-text-muted);
+      --c-accent: var(--live-accent);
+      --c-accent-hover: var(--live-accent-hover);
+      --c-accent-text: var(--live-on-text);
+      --c-exported: var(--live-play);
+      --c-muted: var(--live-accent);
+      --c-ignored: var(--live-alert);
+      --c-empty: var(--live-text-subtle);
     }
 
     html {
       height: 100%;
       background: var(--c-bg);
       color: var(--c-text);
-      font-family: "AbletonSansSmall", sans-serif;
-      font-size: 11.5px;
+      font-family: "Ableton Sans", "AbletonSansSmall", "Segoe UI", system-ui, sans-serif;
+      font-size: 11px;
       font-weight: 500;
       -webkit-font-smoothing: antialiased;
     }
@@ -179,67 +208,104 @@
     header,
     .name-section,
     footer {
-      padding: 14px 16px;
+      padding: 10px 12px;
     }
 
     header {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 16px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 9px;
       border-bottom: 1px solid var(--c-border);
+      background: var(--c-panel-raised);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
+    }
+
+    .device-indicator {
+      width: 9px;
+      height: 9px;
+      border: 1px solid var(--c-accent);
+      background: var(--c-accent);
+      box-shadow: inset 0 0 0 2px var(--c-panel-raised);
     }
 
     h1 {
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 600;
       letter-spacing: 0;
     }
 
     .summary {
       color: var(--c-text-secondary);
+      font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
 
     .name-section {
       display: grid;
-      gap: 6px;
+      gap: 7px;
       border-bottom: 1px solid var(--c-border);
       background: var(--c-panel);
     }
 
     label,
     h2 {
-      font-size: 11.5px;
+      font-size: 11px;
       font-weight: 600;
       letter-spacing: 0;
     }
 
     .name-help {
       color: var(--c-text-secondary);
+      line-height: 1.35;
+    }
+
+    #export-form {
+      display: grid;
+      gap: 5px;
     }
 
     .alx-input {
       width: 100%;
-      height: 24px;
-      padding: 0 6px;
+      height: 23px;
+      padding: 0 7px;
       border: 1px solid var(--c-border);
-      border-radius: 0;
+      border-radius: 2px;
       outline: 0;
       background: var(--c-input);
       color: var(--c-text);
+      caret-color: var(--c-accent);
+      box-shadow: inset 0 1px 2px rgb(0 0 0 / 35%);
     }
 
     .alx-input:focus {
-      outline: 2px solid var(--c-outline);
+      border-color: var(--c-outline);
+      outline: 0;
     }
 
     .tracks-section {
       min-height: 0;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
-      gap: 8px;
-      padding: 12px 16px;
+      gap: 6px;
+      padding: 10px 12px 12px;
+      background: var(--c-bg);
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--c-text-secondary);
+    }
+
+    .section-heading::before {
+      width: 0;
+      height: 0;
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
+      border-left: 6px solid var(--c-text-secondary);
+      content: "";
     }
 
     .track-list {
@@ -247,20 +313,40 @@
       overflow-y: auto;
       border: 1px solid var(--c-border);
       background: var(--c-panel);
+      box-shadow: inset 0 1px 3px rgb(0 0 0 / 25%);
+      scrollbar-color: var(--live-text-subtle) transparent;
+      scrollbar-width: thin;
     }
 
     .track-row {
-      min-height: 48px;
+      min-height: 42px;
       display: grid;
       grid-template-columns: minmax(180px, 1fr) 110px 108px;
       align-items: center;
-      gap: 12px;
-      padding: 7px 9px;
-      border-bottom: 1px solid var(--c-border);
+      gap: 10px;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--c-divider);
+    }
+
+    .track-row:nth-child(even) {
+      background: rgb(255 255 255 / 2%);
+    }
+
+    .track-row:hover {
+      background: var(--live-surface-highlight);
     }
 
     .track-row:last-child {
       border-bottom: 0;
+    }
+
+    .track-list-empty {
+      min-height: 96px;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      color: var(--c-text-secondary);
+      text-align: center;
     }
 
     .track-description {
@@ -270,6 +356,7 @@
     .track-name {
       overflow-wrap: anywhere;
       font-weight: 600;
+      color: var(--c-text);
     }
 
     .track-detail,
@@ -288,7 +375,14 @@
     }
 
     .track-status {
+      justify-self: start;
+      min-width: 58px;
+      padding: 2px 5px;
+      border: 1px solid currentColor;
+      border-radius: 2px;
       font-weight: 600;
+      line-height: 1.1;
+      text-align: center;
       white-space: nowrap;
     }
 
@@ -311,22 +405,25 @@
     footer {
       display: flex;
       justify-content: flex-end;
-      gap: 8px;
+      gap: 6px;
       border-top: 1px solid var(--c-border);
+      background: var(--c-panel-raised);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
     }
 
     .alx-button {
-      min-width: 86px;
-      height: 22px;
-      padding: 0 12px;
+      min-width: 82px;
+      height: 23px;
+      padding: 0 11px;
       border: 1px solid var(--c-border);
-      border-radius: 11px;
+      border-radius: 2px;
       outline: 0;
       background: var(--c-control);
       color: var(--c-text);
       cursor: pointer;
       user-select: none;
       white-space: nowrap;
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
     }
 
     .alx-button:hover {
@@ -334,30 +431,37 @@
     }
 
     .alx-button:focus {
-      outline: 2px solid var(--c-outline);
+      border-color: var(--c-outline);
+      outline: 0;
     }
 
-    .alx-button:active,
     .alx-button--primary {
       background: var(--c-accent);
       color: var(--c-accent-text);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 25%);
     }
 
     .alx-button--primary:hover {
-      background: hsl(31, 100%, 62%);
+      background: var(--c-accent-hover);
+    }
+
+    .alx-button:active {
+      translate: 0 1px;
+      box-shadow: none;
     }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <h1>Export Guitar Pro 5</h1>
+      <div class="device-indicator" aria-hidden="true"></div>
+      <h1>Export to GP5</h1>
       <div class="summary" id="summary"></div>
     </header>
 
     <section class="name-section">
       <form id="export-form">
-        <label for="export-name">Nom de l'export</label>
+        <label for="export-name">Export name</label>
         <input
           class="alx-input"
           id="export-name"
@@ -365,27 +469,29 @@
           type="text"
           maxlength="80"
           autocomplete="off"
+          spellcheck="false"
           required
         >
       </form>
       <div class="name-help">
-        Le SDK ne fournit pas le nom du Live Set. Confirme ou modifie ce nom.
+        The Extensions SDK cannot access the Live Set filename. Enter a name
+        for this export.
       </div>
     </section>
 
     <section class="tracks-section">
-      <h2>Pistes MIDI de l'Arrangement</h2>
-      <div class="track-list" id="track-list"></div>
+      <h2 class="section-heading">Arrangement MIDI tracks</h2>
+      <div class="track-list" id="track-list" role="list"></div>
     </section>
 
     <footer>
-      <button class="alx-button" id="cancel-button" type="button">Annuler</button>
+      <button class="alx-button" id="cancel-button" type="button">Cancel</button>
       <button
         class="alx-button alx-button--primary"
         type="submit"
         form="export-form"
       >
-        Exporter
+        Export
       </button>
     </footer>
   </main>

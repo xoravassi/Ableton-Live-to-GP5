@@ -21,7 +21,7 @@ import { findArrangementMidiClips } from "./midi-extraction.js";
 const EXTENSION_ID = "ableton-live-to-gp5";
 const EXPORT_BASE_NAME = "Ableton_Live_Export";
 const COMMAND_ID = `${EXTENSION_ID}.export-arrangement-midi-to-gp5`;
-const COMMAND_LABEL = "Export to GP5";
+const COMMAND_LABEL = "Convert to GP5";
 
 type Activation = Parameters<typeof initialize>[0];
 

@@ -143,8 +143,8 @@ export function buildExportDialogTracks(
         clipCount: clipsByTrack.get(name) ?? 0,
         noteCount: exportedTrack.notes.length,
         detail: muted
-          ? "Exportee, piste muette dans Guitar Pro"
-          : "Exportee dans Guitar Pro",
+          ? "Exported with the track muted in Guitar Pro"
+          : "Exported to Guitar Pro",
       });
       continue;
     }
@@ -157,8 +157,8 @@ export function buildExportDialogTracks(
         noteCount: 0,
         detail:
           ignoredReason === "muted"
-            ? "Ignoree car explicitement mutee dans Ableton"
-            : `Ignoree : ${ignoredReason}`,
+            ? "Ignored because the track is explicitly muted in Ableton"
+            : `Ignored: ${ignoredReason}`,
       });
       continue;
     }
@@ -168,7 +168,7 @@ export function buildExportDialogTracks(
       status: "empty",
       clipCount: 0,
       noteCount: 0,
-      detail: "Aucune note MIDI exportable dans l'Arrangement",
+      detail: "No exportable MIDI notes in the Arrangement",
     });
   }
 

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Export termin&eacute;</title>
+  <title>Export complete</title>
   <script>
     const resultData = JSON.parse(
       decodeURIComponent("__ABLETON_TO_GP5_RESULT_DATA__")
@@ -36,6 +36,10 @@
         String(resultData.trackCount);
       document.getElementById("note-count").textContent =
         String(resultData.noteCount);
+      document.getElementById("track-label").textContent =
+        resultData.trackCount === 1 ? "track exported" : "tracks exported";
+      document.getElementById("note-label").textContent =
+        resultData.noteCount === 1 ? "note exported" : "notes exported";
 
       document.getElementById("close-button").addEventListener("click", () => {
         closeWithAction("close");
@@ -70,18 +74,35 @@
     }
 
     :root {
-      --c-bg: hsl(0, 0%, 21%);
-      --c-panel: hsl(0, 0%, 18%);
-      --c-control: hsl(0, 0%, 16%);
-      --c-control-hover: hsl(0, 0%, 13%);
-      --c-border: hsl(0, 0%, 7%);
-      --c-outline: hsl(0, 0%, 48%);
-      --c-text: hsl(0, 0%, 71%);
-      --c-text-secondary: hsl(0, 0%, 58%);
-      --c-accent: hsl(31, 100%, 67%);
-      --c-accent-hover: hsl(31, 100%, 62%);
-      --c-accent-text: hsl(0, 0%, 7%);
-      --c-success: hsl(150, 48%, 62%);
+      /* Ableton Live 12 "Twenty-Four Carat" semantic colors. */
+      --live-desktop: #282828;
+      --live-surface: #343434;
+      --live-surface-area: #222222;
+      --live-surface-highlight: #474645;
+      --live-control: #1b1b1b;
+      --live-display: #141414;
+      --live-frame: #0d0d0d;
+      --live-text: #e1c69c;
+      --live-text-muted: #8c7f6c;
+      --live-accent: #ffad56;
+      --live-accent-hover: #ffdd9f;
+      --live-selection: #ffdd9f;
+      --live-on-text: #040404;
+      --live-play: #00d38d;
+
+      --c-bg: var(--live-surface);
+      --c-panel: var(--live-surface-area);
+      --c-panel-raised: var(--live-desktop);
+      --c-control: var(--live-control);
+      --c-control-hover: var(--live-surface-highlight);
+      --c-border: var(--live-frame);
+      --c-outline: var(--live-selection);
+      --c-text: var(--live-text);
+      --c-text-secondary: var(--live-text-muted);
+      --c-accent: var(--live-accent);
+      --c-accent-hover: var(--live-accent-hover);
+      --c-accent-text: var(--live-on-text);
+      --c-success: var(--live-play);
     }
 
     html,
@@ -89,8 +110,8 @@
       height: 100%;
       background: var(--c-bg);
       color: var(--c-text);
-      font-family: "AbletonSansSmall", sans-serif;
-      font-size: 11.5px;
+      font-family: "Ableton Sans", "AbletonSansSmall", "Segoe UI", system-ui, sans-serif;
+      font-size: 11px;
       font-weight: 500;
       -webkit-font-smoothing: antialiased;
     }
@@ -108,21 +129,24 @@
     header {
       display: flex;
       align-items: center;
-      gap: 9px;
-      padding: 14px 16px;
+      gap: 8px;
+      padding: 10px 12px;
       border-bottom: 1px solid var(--c-border);
+      background: var(--c-panel-raised);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
     }
 
     .status-mark {
-      width: 8px;
-      height: 8px;
+      width: 9px;
+      height: 9px;
       flex: 0 0 auto;
-      border-radius: 50%;
+      border: 1px solid var(--c-success);
       background: var(--c-success);
+      box-shadow: inset 0 0 0 2px var(--c-panel-raised);
     }
 
     h1 {
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 600;
       letter-spacing: 0;
     }
@@ -130,20 +154,21 @@
     .result {
       display: grid;
       align-content: center;
-      gap: 14px;
-      padding: 16px;
+      gap: 10px;
+      padding: 12px;
     }
 
     .file {
       min-width: 0;
-      padding: 11px 12px;
+      padding: 9px 10px;
       border: 1px solid var(--c-border);
       background: var(--c-panel);
+      box-shadow: inset 0 1px 3px rgb(0 0 0 / 25%);
     }
 
     .file-name {
       overflow-wrap: anywhere;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
     }
 
@@ -158,14 +183,15 @@
       grid-template-columns: 1fr 1fr;
       border: 1px solid var(--c-border);
       background: var(--c-panel);
+      box-shadow: inset 0 1px 3px rgb(0 0 0 / 25%);
     }
 
     .count {
       display: grid;
       grid-template-columns: auto 1fr;
       align-items: baseline;
-      gap: 7px;
-      padding: 10px 12px;
+      gap: 6px;
+      padding: 8px 10px;
     }
 
     .count + .count {
@@ -173,9 +199,10 @@
     }
 
     .count-value {
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 600;
       color: var(--c-success);
+      font-variant-numeric: tabular-nums;
     }
 
     .count-label {
@@ -185,22 +212,25 @@
     footer {
       display: flex;
       justify-content: flex-end;
-      gap: 8px;
-      padding: 14px 16px;
+      gap: 6px;
+      padding: 10px 12px;
       border-top: 1px solid var(--c-border);
+      background: var(--c-panel-raised);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
     }
 
     .alx-button {
-      min-width: 86px;
-      height: 22px;
-      padding: 0 12px;
+      min-width: 82px;
+      height: 23px;
+      padding: 0 11px;
       border: 1px solid var(--c-border);
-      border-radius: 11px;
+      border-radius: 2px;
       outline: 0;
       background: var(--c-control);
       color: var(--c-text);
       cursor: pointer;
       white-space: nowrap;
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
     }
 
     .alx-button:hover {
@@ -208,24 +238,31 @@
     }
 
     .alx-button:focus {
-      outline: 2px solid var(--c-outline);
+      border-color: var(--c-outline);
+      outline: 0;
     }
 
     .alx-button--primary {
       background: var(--c-accent);
       color: var(--c-accent-text);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 25%);
     }
 
     .alx-button--primary:hover {
       background: var(--c-accent-hover);
+    }
+
+    .alx-button:active {
+      translate: 0 1px;
+      box-shadow: none;
     }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <div class="status-mark"></div>
-      <h1>Export termin&eacute;</h1>
+      <div class="status-mark" aria-hidden="true"></div>
+      <h1>Export complete</h1>
     </header>
 
     <section class="result">
@@ -237,23 +274,23 @@
       <div class="counts">
         <div class="count">
           <div class="count-value" id="track-count"></div>
-          <div class="count-label">pistes export&eacute;es</div>
+          <div class="count-label" id="track-label"></div>
         </div>
         <div class="count">
           <div class="count-value" id="note-count"></div>
-          <div class="count-label">notes export&eacute;es</div>
+          <div class="count-label" id="note-label"></div>
         </div>
       </div>
     </section>
 
     <footer>
-      <button class="alx-button" id="close-button" type="button">Fermer</button>
+      <button class="alx-button" id="close-button" type="button">Close</button>
       <button
         class="alx-button alx-button--primary"
         id="open-folder-button"
         type="button"
       >
-        Ouvrir le dossier
+        Open folder
       </button>
     </footer>
   </main>
