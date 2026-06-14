@@ -18,17 +18,59 @@ export type FoundMidiClip = {
   mutedInGp5?: boolean;
 };
 
+export type ExportTrackKind = "guitar" | "guitar7" | "bass";
+
+export type ExportTrackNote = {
+  pitch: number;
+  adjustedPitch?: number;
+  octaveShift?: number;
+  placementStatus?: "placed" | "unplaceable";
+  voice?: number;
+  string?: number;
+  fret?: number;
+  start: number;
+  duration: number;
+  velocity: number;
+};
+
+export type TrackPlanMetrics = {
+  unplaceableNotes: number;
+  modifiedChords: number;
+  totalAdjustedNotes: number;
+  totalOctaveDistance: number;
+  residualAdjustedNotes: number;
+  residualOctaveDistance: number;
+  adjustedDuration: number;
+  octaveTransitionDistance: number;
+  fretPositionCost: number;
+};
+
+export type TrackPlanOption = {
+  key: string;
+  kind: ExportTrackKind;
+  instrument: string;
+  tuning: number[];
+  globalOctaveShift: number;
+  bestForKind: boolean;
+  recommended: boolean;
+  metrics: TrackPlanMetrics;
+};
+
+export type ExportTrackPlan = {
+  kind: ExportTrackKind;
+  instrument: string;
+  tuning: number[];
+  globalOctaveShift: number;
+  metrics: TrackPlanMetrics;
+};
+
 export type ExportTrack = {
   name: string;
-  kind: "guitar" | "bass";
+  kind: ExportTrackKind;
   tuning: number[];
+  plan: ExportTrackPlan;
   muted?: boolean;
-  notes: {
-    pitch: number;
-    start: number;
-    duration: number;
-    velocity: number;
-  }[];
+  notes: ExportTrackNote[];
 };
 
 export type ExportData = {
@@ -53,12 +95,42 @@ export type ExportReport = {
   tracksMutedInGp5: { name: string; reason: string }[];
   clipsExported: number;
   notesExported: number;
+  notesWritten?: number;
+  notesSkipped?: number;
   outputJson?: string;
   outputGp5?: string;
+  conversionReportPath?: string;
   pythonExecutable?: string;
   pythonCheckOutput?: string;
   warnings: string[];
   error?: string;
+};
+
+export type ConversionTrackReport = {
+  name: string;
+  notesInput: number;
+  notesWritten: number;
+  notesSkipped: number;
+  plannedPositionErrors?: string[];
+  warnings?: string[];
+};
+
+export type ConversionReport = {
+  tracksInput: number;
+  tracksWritten: number;
+  notesInput: number;
+  notesWritten: number;
+  notesSkipped: number;
+  measuresWritten: number;
+  warnings: string[];
+  tracks: ConversionTrackReport[];
+};
+
+export type ExportResultSummary = {
+  trackCount: number;
+  notesWritten: number;
+  notesSkipped: number;
+  verificationWarning?: string;
 };
 
 export type VersionedExportPaths = {
@@ -71,15 +143,29 @@ export type VersionedExportPaths = {
 
 export type ExportDialogTrack = {
   name: string;
+  planningTrack?: ExportTrack;
   status: "exported" | "muted" | "ignored" | "empty";
   clipCount: number;
   noteCount: number;
   detail: string;
 };
 
+export type TrackPlanningSelection = {
+  kind: "auto" | ExportTrackKind;
+  globalOctaveShift: "auto" | number;
+};
+
 export type ExportDialogResult = {
   action: "export" | "cancel";
   name?: string;
+  trackSelections?: Record<string, TrackPlanningSelection>;
+  plannedTracks?: ExportTrack[];
+};
+
+export type ExportDialogSubmission = {
+  name: string;
+  trackSelections: Record<string, TrackPlanningSelection>;
+  plannedTracks: ExportTrack[];
 };
 
 export type ExportResultDialogResult = {

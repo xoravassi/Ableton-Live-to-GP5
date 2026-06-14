@@ -3,8 +3,10 @@ import exportDialogInterface from "./interface.html";
 import exportResultInterface from "./result-interface.html";
 import type {
   ExportDialogResult,
+  ExportDialogSubmission,
   ExportDialogTrack,
   ExportReport,
+  ExportResultSummary,
   ExportResultDialogResult,
 } from "./export-types.js";
 
@@ -62,7 +64,7 @@ export async function showExportDialog(
   suggestedName: string,
   tracks: ExportDialogTrack[],
   report: ExportReport
-): Promise<string | null> {
+): Promise<ExportDialogSubmission | null> {
   const dialogHtml = createExportDialogHtml(suggestedName, tracks, report);
   const dialogUrl = `data:text/html;charset=utf-8,${encodeURIComponent(dialogHtml)}`;
   const rawResult = await context.ui.showModalDialog(dialogUrl, 760, 680);
@@ -73,14 +75,21 @@ export async function showExportDialog(
 
   if (result.action !== "export") return null;
 
-  return getBaseNameFromPathOrName(result.name) ?? null;
+  const name = getBaseNameFromPathOrName(result.name);
+
+  if (!name) return null;
+
+  return {
+    name,
+    trackSelections: result.trackSelections ?? {},
+    plannedTracks: result.plannedTracks ?? [],
+  };
 }
 
 export async function showExportResultDialog(
   context: any,
   gp5Path: string,
-  trackCount: number,
-  noteCount: number
+  summary: ExportResultSummary
 ): Promise<boolean> {
   const dataMarker = "__ABLETON_TO_GP5_RESULT_DATA__";
 
@@ -94,8 +103,7 @@ export async function showExportResultDialog(
     JSON.stringify({
       fileName: path.basename(gp5Path),
       folder: path.dirname(gp5Path),
-      trackCount,
-      noteCount,
+      ...summary,
     })
   );
   const dialogHtml = exportResultInterface.replace(dataMarker, payload);

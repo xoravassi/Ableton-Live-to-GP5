@@ -12,14 +12,11 @@ from guitarpro import models as gp
 TICKS_PER_BEAT = gp.Duration.quarterTime  # 960
 
 DEFAULT_FRET_COUNT = 24
-MAX_FRET_COUNT = 127
 
-# Au-dessus de ce seuil, une piste "guitar" devient une piste notation seule.
-# Exemple : note MIDI 102 sur corde E aiguë 64 = frette 38.
-# Plutôt que créer une tab illisible, on bascule en notation seule.
-STANDARD_GUITAR_MAX_FRET_FOR_TAB = 36
+STANDARD_GUITAR_TUNING = [40, 45, 50, 55, 59, 64]  # E2 A2 D3 G3 B3 E4
+STANDARD_7_STRING_TUNING = [35, 40, 45, 50, 55, 59, 64]  # B1 E2 A2 D3 G3 B3 E4
+STANDARD_BASS_TUNING = [28, 33, 38, 43]  # E1 A1 D2 G2
 
-PIANO_MIDI_INSTRUMENT = 0
 GUITAR_MIDI_INSTRUMENT = 25
 BASS_MIDI_INSTRUMENT = 33
 
@@ -96,6 +93,11 @@ def quantize_ticks(ticks: int) -> int:
     return max(grid, int(round(ticks / grid) * grid))
 
 
+def quantize_start_ticks(ticks: int) -> int:
+    grid = TICKS_PER_BEAT // 8
+    return max(0, int(math.floor(ticks / grid + 0.5) * grid))
+
+
 def duration_from_ticks(ticks: int) -> gp.Duration:
     ticks = max(TICKS_PER_BEAT // 8, quantize_ticks(ticks))
 
@@ -151,157 +153,12 @@ def clamp_velocity(value: Any) -> int:
 
 def infer_default_tuning(track_kind: str) -> list[int]:
     if track_kind.lower() == "bass":
-        return [28, 33, 38, 43]  # E1 A1 D2 G2
+        return STANDARD_BASS_TUNING.copy()
 
-    return [40, 45, 50, 55, 59, 64]  # E2 A2 D3 G3 B3 E4
+    if track_kind.lower() == "guitar7":
+        return STANDARD_7_STRING_TUNING.copy()
 
-
-def normalize_tuning(raw_tuning: Any, track_kind: str) -> tuple[list[int], bool]:
-    if not isinstance(raw_tuning, list) or not raw_tuning:
-        return infer_default_tuning(track_kind), True
-
-    tuning: list[int] = []
-
-    for value in raw_tuning:
-        try:
-            tuning.append(int(value))
-        except Exception:
-            continue
-
-    if not tuning:
-        return infer_default_tuning(track_kind), True
-
-    return tuning, False
-
-
-def get_track_pitches(source_notes: list[Any]) -> list[int]:
-    pitches: list[int] = []
-
-    for note in source_notes:
-        if not isinstance(note, dict):
-            continue
-
-        try:
-            pitches.append(int(note["pitch"]))
-        except Exception:
-            continue
-
-    return pitches
-
-
-def should_use_notation_only_track(
-    track_kind: str,
-    tuning_low_to_high: list[int],
-    source_notes: list[Any],
-) -> tuple[bool, str | None]:
-    # Les basses restent en tab basse, sauf si tu décides plus tard de changer ce comportement.
-    if track_kind.lower() == "bass":
-        return False, None
-
-    pitches = get_track_pitches(source_notes)
-
-    if not pitches:
-        return False, None
-
-    min_pitch = min(pitches)
-    max_pitch = max(pitches)
-
-    min_string = min(tuning_low_to_high)
-    max_string = max(tuning_low_to_high)
-
-    if min_pitch < min_string:
-        return True, (
-            f"lowest note MIDI {min_pitch} is below lowest string MIDI {min_string}"
-        )
-
-    required_fret = max_pitch - max_string
-
-    if required_fret > STANDARD_GUITAR_MAX_FRET_FOR_TAB:
-        return True, (
-            f"highest note MIDI {max_pitch} requires fret {required_fret}, "
-            f"above notation-only threshold {STANDARD_GUITAR_MAX_FRET_FOR_TAB}"
-        )
-
-    return False, None
-
-
-def make_virtual_notation_tuning(source_notes: list[Any]) -> list[int]:
-    pitches = get_track_pitches(source_notes)
-
-    if not pitches:
-        return [40, 45, 50, 55, 59, 64]
-
-    min_pitch = min(pitches)
-    max_pitch = max(pitches)
-
-    # Si toute la piste tient dans 24 demi-tons, 7 cordes virtuelles identiques suffisent.
-    # Exemple : Theme 93–102 → tuning [93,93,...], frettes 0–9.
-    if max_pitch - min_pitch <= DEFAULT_FRET_COUNT:
-        return [min_pitch] * 7
-
-    # Sinon, on répartit 7 ancres pour couvrir la plage MIDI.
-    first_anchor = min_pitch
-    last_anchor = max(0, max_pitch - DEFAULT_FRET_COUNT)
-
-    tuning: list[int] = []
-
-    for index in range(7):
-        ratio = index / 6
-        anchor = round(first_anchor + (last_anchor - first_anchor) * ratio)
-        tuning.append(max(0, min(127, anchor)))
-
-    return sorted(tuning)
-
-
-def compute_fret_count(
-    tuning_low_to_high: list[int],
-    source_notes: list[Any],
-    track_report: dict[str, Any],
-) -> int:
-    pitches = get_track_pitches(source_notes)
-
-    if not pitches:
-        track_report["fretCount"] = DEFAULT_FRET_COUNT
-        return DEFAULT_FRET_COUNT
-
-    required_fret_count = DEFAULT_FRET_COUNT
-    impossible_low_pitches: dict[str, int] = {}
-
-    for pitch in pitches:
-        possible_frets = [
-            pitch - string_pitch
-            for string_pitch in tuning_low_to_high
-            if pitch >= string_pitch
-        ]
-
-        if not possible_frets:
-            impossible_low_pitches.setdefault(str(pitch), 0)
-            impossible_low_pitches[str(pitch)] += 1
-            continue
-
-        required_fret_count = max(required_fret_count, min(possible_frets))
-
-    fret_count = min(required_fret_count, MAX_FRET_COUNT)
-
-    if fret_count > DEFAULT_FRET_COUNT:
-        track_report["warnings"].append(
-            f"Extended fret count to {fret_count} while keeping original tuning."
-        )
-
-    if required_fret_count > MAX_FRET_COUNT:
-        track_report["warnings"].append(
-            f"Some notes may still be too high. Required fret count: "
-            f"{required_fret_count}, max allowed: {MAX_FRET_COUNT}."
-        )
-
-    if impossible_low_pitches:
-        track_report["warnings"].append(
-            "Some notes are below the lowest string and may be skipped."
-        )
-        track_report["impossibleLowPitches"] = impossible_low_pitches
-
-    track_report["fretCount"] = fret_count
-    return fret_count
+    return STANDARD_GUITAR_TUNING.copy()
 
 
 def make_gp_strings(tuning_low_to_high: list[int]) -> list[gp.GuitarString]:
@@ -313,6 +170,24 @@ def make_gp_strings(tuning_low_to_high: list[int]) -> list[gp.GuitarString]:
         gp.GuitarString(number=index + 1, value=int(pitch))
         for index, pitch in enumerate(high_to_low)
     ]
+
+
+def fit_pitch_to_fretboard(pitch: int, track: gp.Track) -> tuple[int, int]:
+    lowest_pitch = min(string.value for string in track.strings)
+    highest_pitch = max(
+        string.value + track.fretCount
+        for string in track.strings
+    )
+    adjusted_pitch = pitch
+
+    while adjusted_pitch < lowest_pitch:
+        adjusted_pitch += 12
+
+    while adjusted_pitch > highest_pitch:
+        adjusted_pitch -= 12
+
+    octave_shift = (adjusted_pitch - pitch) // 12
+    return adjusted_pitch, octave_shift
 
 
 def choose_string_and_fret(
@@ -354,24 +229,99 @@ def make_note_beat(
 
     for note_data in notes:
         try:
-            pitch = int(note_data["pitch"])
+            original_pitch = int(note_data["pitch"])
         except Exception:
             track_report["notesSkipped"] += 1
             track_report["warnings"].append("Skipped note with missing/invalid pitch.")
             continue
 
+        placement_status = note_data.get("placementStatus")
+
+        if placement_status == "unplaceable":
+            track_report["notesSkipped"] += 1
+            track_report["unplaceablePitches"].setdefault(str(original_pitch), 0)
+            track_report["unplaceablePitches"][str(original_pitch)] += 1
+            continue
+
+        try:
+            pitch = int(note_data.get("adjustedPitch", original_pitch))
+        except Exception:
+            pitch = original_pitch
+
+        if "adjustedPitch" not in note_data:
+            pitch, octave_shift = fit_pitch_to_fretboard(original_pitch, track)
+        else:
+            try:
+                octave_shift = int(
+                    note_data.get("octaveShift", (pitch - original_pitch) // 12)
+                )
+            except Exception:
+                octave_shift = (pitch - original_pitch) // 12
+
+        if octave_shift != 0:
+            track_report["octaveAdjustedNotes"] += 1
+            track_report["octaveAdjustments"].append(
+                {
+                    "originalPitch": original_pitch,
+                    "adjustedPitch": pitch,
+                    "octaveShift": octave_shift,
+                }
+            )
+
         velocity = clamp_velocity(note_data.get("velocity", gp.Velocities.default))
 
-        position = choose_string_and_fret(
-            pitch=pitch,
-            track=track,
-            used_strings=used_strings,
-        )
+        position: tuple[int, int] | None = None
+        planned_position_error: str | None = None
+
+        try:
+            planned_string = int(note_data["string"])
+            planned_fret = int(note_data["fret"])
+            string = next(
+                (
+                    candidate
+                    for candidate in track.strings
+                    if candidate.number == planned_string
+                ),
+                None,
+            )
+
+            if (
+                string is not None
+                and planned_string not in used_strings
+                and 0 <= planned_fret <= track.fretCount
+                and string.value + planned_fret == pitch
+            ):
+                position = (planned_string, planned_fret)
+            elif placement_status == "placed":
+                planned_position_error = (
+                    f"Invalid planned position for MIDI {original_pitch}: "
+                    f"string {planned_string}, fret {planned_fret}, "
+                    f"adjusted pitch {pitch}."
+                )
+        except Exception:
+            if placement_status == "placed":
+                planned_position_error = (
+                    f"Missing planned string/fret for MIDI {original_pitch}."
+                )
+
+        if planned_position_error is not None:
+            track_report["notesSkipped"] += 1
+            track_report["plannedPositionErrors"].append(planned_position_error)
+            track_report["unplaceablePitches"].setdefault(str(original_pitch), 0)
+            track_report["unplaceablePitches"][str(original_pitch)] += 1
+            continue
+
+        if position is None and placement_status != "placed":
+            position = choose_string_and_fret(
+                pitch=pitch,
+                track=track,
+                used_strings=used_strings,
+            )
 
         if position is None:
             track_report["notesSkipped"] += 1
-            track_report["unplaceablePitches"].setdefault(str(pitch), 0)
-            track_report["unplaceablePitches"][str(pitch)] += 1
+            track_report["unplaceablePitches"].setdefault(str(original_pitch), 0)
+            track_report["unplaceablePitches"][str(original_pitch)] += 1
             continue
 
         string_number, fret = position
@@ -420,8 +370,11 @@ def create_measure_headers(
     return headers
 
 
-def get_song_length_in_beats(data: dict[str, Any]) -> float:
-    max_end = 0.0
+def get_measure_count(
+    data: dict[str, Any],
+    measure_length_ticks: int,
+) -> int:
+    max_end_ticks = 0
 
     for track in data.get("tracks", []):
         if not isinstance(track, dict):
@@ -442,14 +395,16 @@ def get_song_length_in_beats(data: dict[str, Any]) -> float:
             except Exception:
                 continue
 
-            max_end = max(max_end, start + duration)
+            start_ticks = quantize_start_ticks(beats_to_ticks(start))
+            duration_ticks = quantize_ticks(beats_to_ticks(duration))
+            max_end_ticks = max(max_end_ticks, start_ticks + duration_ticks)
 
-    return max(1.0, max_end)
+    return max(1, math.ceil(max_end_ticks / measure_length_ticks))
 
 
 def group_notes_by_measure_and_start(
     notes: list[dict[str, Any]],
-    beats_per_measure: int,
+    measure_length_ticks: int,
     track_report: dict[str, Any],
 ) -> dict[int, dict[int, list[dict[str, Any]]]]:
     grouped: dict[int, dict[int, list[dict[str, Any]]]] = {}
@@ -467,17 +422,96 @@ def group_notes_by_measure_and_start(
             track_report["warnings"].append("Skipped note with invalid start.")
             continue
 
-        start_ticks = quantize_ticks(beats_to_ticks(start_beats))
-
-        measure_index = int(start_beats // beats_per_measure)
-        measure_start_ticks = measure_index * beats_per_measure * TICKS_PER_BEAT
-        local_start_ticks = start_ticks - measure_start_ticks
+        start_ticks = quantize_start_ticks(beats_to_ticks(start_beats))
+        measure_index, local_start_ticks = divmod(
+            start_ticks,
+            measure_length_ticks,
+        )
 
         grouped.setdefault(measure_index, {})
         grouped[measure_index].setdefault(local_start_ticks, [])
         grouped[measure_index][local_start_ticks].append(note)
 
     return grouped
+
+
+def populate_measure_voice(
+    voice: gp.Voice,
+    local_events: dict[int, list[dict[str, Any]]],
+    measure_length_ticks: int,
+    track: gp.Track,
+    track_report: dict[str, Any],
+    use_empty_beat_when_silent: bool,
+) -> None:
+    event_starts = sorted(local_events.keys())
+    cursor = 0
+
+    for event_index, local_start in enumerate(event_starts):
+        local_start = max(0, min(local_start, measure_length_ticks))
+
+        if local_start > cursor:
+            for rest_duration in split_duration_ticks(local_start - cursor):
+                absolute_start = voice.measure.header.start + cursor
+                voice.beats.append(make_rest(voice, absolute_start, rest_duration))
+                cursor += rest_duration
+
+        notes_at_start = local_events[local_start]
+        valid_duration_ticks: list[int] = []
+
+        for note in notes_at_start:
+            if not isinstance(note, dict):
+                continue
+
+            try:
+                valid_duration_ticks.append(
+                    quantize_ticks(beats_to_ticks(float(note.get("duration", 1))))
+                )
+            except Exception:
+                continue
+
+        raw_duration_ticks = (
+            min(valid_duration_ticks)
+            if valid_duration_ticks
+            else TICKS_PER_BEAT
+        )
+        next_event_start = (
+            event_starts[event_index + 1]
+            if event_index + 1 < len(event_starts)
+            else measure_length_ticks
+        )
+        max_available = max(TICKS_PER_BEAT // 8, next_event_start - local_start)
+        duration_ticks = max(
+            TICKS_PER_BEAT // 8,
+            min(raw_duration_ticks, max_available),
+        )
+        absolute_start = voice.measure.header.start + local_start
+        beat = make_note_beat(
+            voice=voice,
+            start_tick=absolute_start,
+            duration_ticks=duration_ticks,
+            notes=notes_at_start,
+            track=track,
+            track_report=track_report,
+        )
+
+        voice.beats.append(beat)
+        cursor = local_start + duration_ticks
+
+    if cursor < measure_length_ticks and event_starts:
+        for rest_duration in split_duration_ticks(measure_length_ticks - cursor):
+            absolute_start = voice.measure.header.start + cursor
+            voice.beats.append(make_rest(voice, absolute_start, rest_duration))
+            cursor += rest_duration
+
+    if not voice.beats:
+        beat_factory = make_empty_beat if use_empty_beat_when_silent else make_rest
+        voice.beats.append(
+            beat_factory(
+                voice=voice,
+                start_tick=voice.measure.header.start,
+                duration_ticks=measure_length_ticks,
+            )
+        )
 
 
 def build_track_measures(
@@ -489,7 +523,6 @@ def build_track_measures(
 ) -> None:
     beats_per_measure = numerator * (4 / denominator)
     measure_length_ticks = beats_to_ticks(beats_per_measure)
-
     source_notes = source_track.get("notes", [])
 
     if not isinstance(source_notes, list):
@@ -497,100 +530,43 @@ def build_track_measures(
         source_notes = []
 
     track_report["notesInput"] = len(source_notes)
+    notes_by_voice: list[list[dict[str, Any]]] = [[], []]
 
-    grouped = group_notes_by_measure_and_start(
-        notes=source_notes,
-        beats_per_measure=int(beats_per_measure),
-        track_report=track_report,
-    )
+    for note in source_notes:
+        if not isinstance(note, dict):
+            track_report["notesSkipped"] += 1
+            track_report["warnings"].append("Skipped non-object note.")
+            continue
+
+        try:
+            voice_index = int(note.get("voice", 0))
+        except Exception:
+            voice_index = 0
+
+        voice_index = 1 if voice_index == 1 else 0
+        notes_by_voice[voice_index].append(note)
+
+    grouped_by_voice = [
+        group_notes_by_measure_and_start(
+            notes=voice_notes,
+            measure_length_ticks=measure_length_ticks,
+            track_report=track_report,
+        )
+        for voice_notes in notes_by_voice
+    ]
 
     for measure_index, measure in enumerate(track.measures):
         for existing_voice in measure.voices:
             existing_voice.beats.clear()
 
-        voice = measure.voices[0]
-        local_events = grouped.get(measure_index, {})
-        event_starts = sorted(local_events.keys())
-
-        cursor = 0
-
-        for event_index, local_start in enumerate(event_starts):
-            local_start = max(0, min(local_start, measure_length_ticks))
-
-            if local_start > cursor:
-                for rest_duration in split_duration_ticks(local_start - cursor):
-                    absolute_start = measure.header.start + cursor
-                    voice.beats.append(make_rest(voice, absolute_start, rest_duration))
-                    cursor += rest_duration
-
-            notes_at_start = local_events[local_start]
-            valid_duration_ticks: list[int] = []
-
-            for note in notes_at_start:
-                if not isinstance(note, dict):
-                    continue
-
-                try:
-                    valid_duration_ticks.append(
-                        quantize_ticks(beats_to_ticks(float(note.get("duration", 1))))
-                    )
-                except Exception:
-                    continue
-
-            raw_duration_ticks = (
-                min(valid_duration_ticks)
-                if valid_duration_ticks
-                else TICKS_PER_BEAT
-            )
-
-            next_event_start = (
-                event_starts[event_index + 1]
-                if event_index + 1 < len(event_starts)
-                else measure_length_ticks
-            )
-
-            max_available = max(TICKS_PER_BEAT // 8, next_event_start - local_start)
-            duration_ticks = min(raw_duration_ticks, max_available)
-            duration_ticks = max(TICKS_PER_BEAT // 8, duration_ticks)
-
-            absolute_start = measure.header.start + local_start
-
-            beat = make_note_beat(
+        for voice_index, voice in enumerate(measure.voices[:2]):
+            populate_measure_voice(
                 voice=voice,
-                start_tick=absolute_start,
-                duration_ticks=duration_ticks,
-                notes=notes_at_start,
+                local_events=grouped_by_voice[voice_index].get(measure_index, {}),
+                measure_length_ticks=measure_length_ticks,
                 track=track,
                 track_report=track_report,
-            )
-
-            voice.beats.append(beat)
-            cursor = local_start + duration_ticks
-
-        if cursor < measure_length_ticks:
-            for rest_duration in split_duration_ticks(measure_length_ticks - cursor):
-                absolute_start = measure.header.start + cursor
-                voice.beats.append(make_rest(voice, absolute_start, rest_duration))
-                cursor += rest_duration
-
-        if not voice.beats:
-            voice.beats.append(
-                make_rest(
-                    voice=voice,
-                    start_tick=measure.header.start,
-                    duration_ticks=measure_length_ticks,
-                )
-            )
-
-        if len(measure.voices) > 1:
-            empty_voice = measure.voices[1]
-            empty_voice.beats.clear()
-            empty_voice.beats.append(
-                make_empty_beat(
-                    voice=empty_voice,
-                    start_tick=measure.header.start,
-                    duration_ticks=measure_length_ticks,
-                )
+                use_empty_beat_when_silent=voice_index == 1,
             )
 
 
@@ -599,15 +575,18 @@ def create_track_report(name: str, kind: str, muted: bool) -> dict[str, Any]:
         "name": name,
         "kind": kind,
         "muted": muted,
-        "notationOnly": False,
-        "notationOnlyReason": None,
         "notesInput": 0,
         "notesWritten": 0,
         "notesSkipped": 0,
         "effectiveTuning": [],
         "fretCount": DEFAULT_FRET_COUNT,
+        "globalOctaveShift": 0,
+        "planningMetrics": {},
+        "voicesUsed": 1,
+        "octaveAdjustedNotes": 0,
+        "octaveAdjustments": [],
         "unplaceablePitches": {},
-        "impossibleLowPitches": {},
+        "plannedPositionErrors": [],
         "warnings": [],
     }
 
@@ -639,9 +618,8 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
 
     report["tracksInput"] = len(tracks_input)
 
-    song_length_beats = get_song_length_in_beats(data)
-    beats_per_measure = numerator * (4 / denominator)
-    measure_count = max(1, math.ceil(song_length_beats / beats_per_measure))
+    measure_length_ticks = numerator * gp.Duration(value=denominator).time
+    measure_count = get_measure_count(data, measure_length_ticks)
 
     song = gp.Song()
     song.title = title
@@ -670,56 +648,45 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
             source_notes = []
 
         track_report = create_track_report(name=name, kind=kind, muted=muted)
+        source_plan = source_track.get("plan", {})
 
-        tuning, used_default_tuning = normalize_tuning(
-            raw_tuning=source_track.get("tuning"),
-            track_kind=kind,
-        )
+        if isinstance(source_plan, dict):
+            try:
+                track_report["globalOctaveShift"] = int(
+                    source_plan.get("globalOctaveShift", 0)
+                )
+            except Exception:
+                track_report["globalOctaveShift"] = 0
 
-        if used_default_tuning:
-            track_report["warnings"].append(
-                "Missing or invalid tuning. Used default tuning."
-            )
+            planning_metrics = source_plan.get("metrics", {})
+            if isinstance(planning_metrics, dict):
+                track_report["planningMetrics"] = planning_metrics
 
-        use_notation_only, notation_only_reason = should_use_notation_only_track(
-            track_kind=kind,
-            tuning_low_to_high=tuning,
-            source_notes=source_notes,
-        )
+        track_report["voicesUsed"] = 1
+        for note in source_notes:
+            if not isinstance(note, dict):
+                continue
 
-        if use_notation_only:
-            tuning = make_virtual_notation_tuning(source_notes)
-            fret_count = DEFAULT_FRET_COUNT
+            try:
+                if int(note.get("voice", 0)) == 1:
+                    track_report["voicesUsed"] = 2
+                    break
+            except Exception:
+                continue
 
-            track_report["notationOnly"] = True
-            track_report["notationOnlyReason"] = notation_only_reason
-            track_report["effectiveTuning"] = tuning
-            track_report["fretCount"] = fret_count
-            track_report["warnings"].append(
-                "Used notation-only virtual track to preserve all MIDI pitches."
-            )
+        tuning = infer_default_tuning(kind)
 
-            if notation_only_reason:
-                track_report["warnings"].append(f"Reason: {notation_only_reason}.")
-        else:
-            track_report["effectiveTuning"] = tuning
+        track_report["effectiveTuning"] = tuning
 
-            fret_count = compute_fret_count(
-                tuning_low_to_high=tuning,
-                source_notes=source_notes,
-                track_report=track_report,
-            )
+        fret_count = DEFAULT_FRET_COUNT
 
         gp_strings = make_gp_strings(tuning)
 
-        if track_report["notationOnly"]:
-            midi_instrument = PIANO_MIDI_INSTRUMENT
-        else:
-            midi_instrument = (
-                BASS_MIDI_INSTRUMENT
-                if kind.lower() == "bass"
-                else GUITAR_MIDI_INSTRUMENT
-            )
+        midi_instrument = (
+            BASS_MIDI_INSTRUMENT
+            if kind.lower() == "bass"
+            else GUITAR_MIDI_INSTRUMENT
+        )
 
         midi_channel = gp.MidiChannel(
             channel=(index - 1) % 16,
@@ -731,7 +698,7 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
             midi_channel.volume = 0
 
         track_settings = gp.TrackSettings(
-            tablature=not track_report["notationOnly"],
+            tablature=True,
             notation=True,
         )
 
@@ -761,6 +728,17 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
         if track_report["unplaceablePitches"]:
             track_report["warnings"].append(
                 "Some notes could not be placed on the fretboard."
+            )
+
+        if track_report["plannedPositionErrors"]:
+            track_report["warnings"].append(
+                "Some planned string/fret positions were invalid."
+            )
+
+        if track_report["octaveAdjustedNotes"] > 0:
+            track_report["warnings"].append(
+                f"{track_report['octaveAdjustedNotes']} note(s) were moved by "
+                "octaves to fit the tablature."
             )
 
         report["notesInput"] += track_report["notesInput"]

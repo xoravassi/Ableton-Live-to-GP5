@@ -1,0 +1,23 @@
+{
+  "song": {
+    "title": "Out of Range Fret Test",
+    "tempo": 120,
+    "timeSignature": {
+      "numerator": 4,
+      "denominator": 4
+    }
+  },
+  "tracks": [
+    {
+      "name": "Standard EADGBE Range Test",
+      "kind": "guitar",
+      "tuning": [40, 45, 50, 55, 59, 64],
+      "notes": [
+        { "pitch": 30, "start": 0, "duration": 1, "velocity": 100 },
+        { "pitch": 40, "start": 1, "duration": 1, "velocity": 100 },
+        { "pitch": 88, "start": 2, "duration": 1, "velocity": 100 },
+        { "pitch": 127, "start": 3, "duration": 1, "velocity": 100 }
+      ]
+    }
+  ]
+}

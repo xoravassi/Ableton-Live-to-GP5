@@ -5,9 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Export to GP5</title>
   <script>
+    __ABLETON_TO_GP5_PLANNER_RUNTIME_SOURCE__
     const dialogData = JSON.parse(
       decodeURIComponent("__ABLETON_TO_GP5_DIALOG_DATA__")
     );
+    const preparedTracks = new Map();
+    const latestPlanRequest = new Map();
+    const pendingTracks = new Set();
+    let plannerReady = false;
+    let nextPlanRequestId = 1;
     const isWebKitMessageHandlerAvailable =
       window.webkit &&
       window.webkit.messageHandlers &&
@@ -38,15 +44,185 @@
         return;
       }
 
-      closeWithResult({ action: "export", name });
+      if (!plannerReady || pendingTracks.size > 0) return;
+
+      const trackSelections = {};
+
+      document.querySelectorAll(".track-row[data-track-name]").forEach((row) => {
+        const instrumentSelect = row.querySelector(".instrument-select");
+        const octaveSelect = row.querySelector(".octave-select");
+
+        if (!instrumentSelect || !octaveSelect) return;
+
+        const shiftValue = octaveSelect.value;
+        trackSelections[row.dataset.trackName] = {
+          kind: instrumentSelect.value,
+          globalOctaveShift:
+            shiftValue === "auto" ? "auto" : Number(shiftValue)
+        };
+      });
+
+      const plannedTracks = dialogData.tracks
+        .filter((track) => track.planningTrack)
+        .map((track) => preparedTracks.get(track.name))
+        .filter(Boolean);
+
+      if (
+        plannedTracks.length !==
+        dialogData.tracks.filter((track) => track.planningTrack).length
+      ) {
+        showPlannerError("Some tracks have not finished planning.");
+        return;
+      }
+
+      closeWithResult({
+        action: "export",
+        name,
+        trackSelections,
+        plannedTracks
+      });
     }
 
     function formatCount(value, singular, plural) {
       return value + " " + (value === 1 ? singular : plural);
     }
 
+    function resolvePlanOption(track, kind, globalShift) {
+      const options = track.planOptions || [];
+
+      return options.find((option) => {
+        const kindMatches = kind === "auto" || option.kind === kind;
+        const shiftMatches =
+          globalShift === "auto" ||
+          option.globalOctaveShift === Number(globalShift);
+
+        return kindMatches && shiftMatches;
+      }) || options.find((option) => option.recommended) || options[0];
+    }
+
+    function formatPlanDetail(option) {
+      if (!option) return "";
+
+      const details = [];
+
+      if (option.globalOctaveShift !== 0) {
+        const prefix = option.globalOctaveShift > 0 ? "+" : "";
+        details.push(
+          "global octave " + prefix + option.globalOctaveShift
+        );
+      }
+
+      if (option.metrics.totalAdjustedNotes > 0) {
+        details.push(
+          formatCount(
+            option.metrics.totalAdjustedNotes,
+            "note moved by octave",
+            "notes moved by octave"
+          )
+        );
+      }
+
+      if (option.metrics.modifiedChords > 0) {
+        details.push(
+          formatCount(
+            option.metrics.modifiedChords,
+            "chord revoiced",
+            "chords revoiced"
+          )
+        );
+      }
+
+      if (option.metrics.unplaceableNotes > 0) {
+        details.push(
+          formatCount(
+            option.metrics.unplaceableNotes,
+            "unplaceable note",
+            "unplaceable notes"
+          )
+        );
+      }
+
+      return details.length > 0 ? details.join(" - ") : "No pitch correction";
+    }
+
+    function formatTrackPlanDetail(track, option) {
+      const detail = formatPlanDetail(option);
+      return track.status === "muted"
+        ? "Track will be muted - " + detail
+        : detail;
+    }
+
+    function setExportEnabled() {
+      const exportButton = document.getElementById("export-button");
+      const ready = plannerReady && pendingTracks.size === 0;
+
+      exportButton.disabled = !ready;
+      exportButton.textContent =
+        pendingTracks.size > 0 ? "Updating..." : "Export";
+    }
+
+    function showPlannerError(message) {
+      plannerReady = false;
+      pendingTracks.clear();
+      document.getElementById("loading-title").textContent =
+        "Tablature planning failed";
+      document.getElementById("loading-detail").textContent = message;
+      document.getElementById("loading-progress").classList.add(
+        "loading-progress--error"
+      );
+      document.getElementById("loading-panel").hidden = false;
+      document.getElementById("track-list").hidden = true;
+      setExportEnabled();
+    }
+
+    function updateLoadingProgress(message) {
+      const percent =
+        message.total > 0
+          ? Math.round((message.current - 1) / message.total * 100)
+          : 0;
+
+      document.getElementById("loading-title").textContent =
+        "Mapping " + message.trackName;
+      document.getElementById("loading-detail").textContent =
+        formatCount(message.noteCount, "MIDI note", "MIDI notes") +
+        " - testing standard tunings and octave placements";
+      document.getElementById("loading-progress-fill").style.width =
+        percent + "%";
+      document.getElementById("loading-count").textContent =
+        "Analyzing track " + message.current + " / " + message.total;
+    }
+
+    function selectedOptionForPreparedTrack(track) {
+      const prepared = preparedTracks.get(track.name);
+      const options = track.planOptions || [];
+
+      if (!prepared) return options.find((option) => option.recommended);
+
+      return options.find(
+        (option) =>
+          option.kind === prepared.plan.kind &&
+          option.globalOctaveShift === prepared.plan.globalOctaveShift
+      );
+    }
+
+    function createSelect(className, ariaLabel, options) {
+      const select = document.createElement("select");
+      select.className = "alx-select " + className;
+      select.setAttribute("aria-label", ariaLabel);
+
+      options.forEach(({ value, label }) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        select.appendChild(option);
+      });
+
+      return select;
+    }
+
     function renderTracks() {
       const trackList = document.getElementById("track-list");
+      trackList.replaceChildren();
       const statusLabels = {
         exported: "Exported",
         muted: "Muted",
@@ -67,6 +243,7 @@
         const row = document.createElement("div");
         row.className = "track-row";
         row.setAttribute("role", "listitem");
+        row.dataset.trackName = track.name;
 
         const description = document.createElement("div");
         description.className = "track-description";
@@ -75,9 +252,120 @@
         name.className = "track-name";
         name.textContent = track.name;
 
+        const title = document.createElement("div");
+        title.className = "track-title";
+        title.appendChild(name);
+        let instrument = null;
+
+        if (track.instrument) {
+          instrument = document.createElement("span");
+          instrument.className = "track-instrument";
+          instrument.textContent = track.instrument;
+          title.appendChild(instrument);
+        }
+
         const detail = document.createElement("div");
         detail.className = "track-detail";
         detail.textContent = track.detail;
+
+        if (track.planOptions && track.planOptions.length > 0) {
+          const planning = document.createElement("div");
+          planning.className = "track-planning";
+          const instrumentSelect = createSelect(
+            "instrument-select",
+            "Instrument for " + track.name,
+            [
+              { value: "auto", label: "Auto instrument" },
+              { value: "guitar", label: "6-string guitar" },
+              { value: "guitar7", label: "7-string guitar" },
+              { value: "bass", label: "4-string bass" }
+            ]
+          );
+          const octaveOptions = [
+            { value: "auto", label: "Auto octave" },
+            { value: "0", label: "Original octave" }
+          ];
+
+          [-4, -3, -2, -1, 1, 2, 3, 4].forEach((shift) => {
+            octaveOptions.push({
+              value: String(shift),
+              label: (shift > 0 ? "+" : "") + shift + " octave" +
+                (Math.abs(shift) === 1 ? "" : "s")
+            });
+          });
+
+          const octaveSelect = createSelect(
+            "octave-select",
+            "Global octave for " + track.name,
+            octaveOptions
+          );
+
+          const updatePlan = () => {
+            const option = resolvePlanOption(
+              track,
+              instrumentSelect.value,
+              octaveSelect.value
+            );
+
+            if (!option) return;
+
+            if (instrument) {
+              instrument.textContent = option.instrument;
+            }
+            detail.textContent = formatTrackPlanDetail(track, option);
+
+            const requestId = nextPlanRequestId++;
+            latestPlanRequest.set(track.name, requestId);
+            pendingTracks.add(track.name);
+            setExportEnabled();
+
+            setTimeout(() => {
+              try {
+                const prepared = preparedTracks.get(track.name);
+
+                if (!prepared) {
+                  throw new Error("Prepared track not found.");
+                }
+
+                const planOptions =
+                  globalThis.abletonToGp5Planner.planTrack(prepared, {
+                    kind: instrumentSelect.value,
+                    globalOctaveShift:
+                      octaveSelect.value === "auto"
+                        ? "auto"
+                        : Number(octaveSelect.value)
+                  });
+
+                if (latestPlanRequest.get(track.name) !== requestId) return;
+
+                preparedTracks.set(track.name, prepared);
+                track.planOptions = planOptions;
+                pendingTracks.delete(track.name);
+                setExportEnabled();
+              } catch (error) {
+                showPlannerError(String(error));
+              }
+            }, 0);
+          };
+
+          instrumentSelect.addEventListener("change", updatePlan);
+          octaveSelect.addEventListener("change", updatePlan);
+          planning.appendChild(instrumentSelect);
+          planning.appendChild(octaveSelect);
+          description.appendChild(title);
+          description.appendChild(detail);
+          description.appendChild(planning);
+
+          const initialOption = selectedOptionForPreparedTrack(track);
+
+          if (initialOption) {
+            instrument.textContent = initialOption.instrument;
+            detail.textContent = formatTrackPlanDetail(track, initialOption);
+          }
+        } else {
+          description.appendChild(title);
+          description.appendChild(detail);
+        }
 
         const status = document.createElement("div");
         status.className = "track-status track-status--" + track.status;
@@ -89,13 +377,74 @@
           formatCount(track.clipCount, "clip", "clips") + " / " +
           formatCount(track.noteCount, "note", "notes");
 
-        description.appendChild(name);
-        description.appendChild(detail);
         row.appendChild(description);
         row.appendChild(status);
         row.appendChild(count);
         trackList.appendChild(row);
       });
+    }
+
+    function startPlanner() {
+      const planningTracks = dialogData.tracks
+        .map((track) => track.planningTrack)
+        .filter(Boolean);
+
+      if (planningTracks.length === 0) {
+        plannerReady = true;
+        document.getElementById("loading-panel").hidden = true;
+        document.getElementById("track-list").hidden = false;
+        renderTracks();
+        setExportEnabled();
+        return;
+      }
+
+      let trackIndex = 0;
+
+      const processNextTrack = () => {
+        if (trackIndex >= planningTracks.length) {
+          plannerReady = true;
+          document.getElementById("loading-progress-fill").style.width =
+            "100%";
+          document.getElementById("loading-panel").hidden = true;
+          document.getElementById("track-list").hidden = false;
+          renderTracks();
+          setExportEnabled();
+          return;
+        }
+
+        const planningTrack = planningTracks[trackIndex];
+        const dialogTrack = dialogData.tracks.find(
+          (track) => track.name === planningTrack.name
+        );
+
+        updateLoadingProgress({
+          current: trackIndex + 1,
+          total: planningTracks.length,
+          trackName: planningTrack.name,
+          noteCount: planningTrack.notes.length
+        });
+
+        setTimeout(() => {
+          try {
+            const planOptions =
+              globalThis.abletonToGp5Planner.planTrack(planningTrack);
+
+            preparedTracks.set(planningTrack.name, planningTrack);
+
+            if (dialogTrack) {
+              dialogTrack.instrument = planningTrack.plan.instrument;
+              dialogTrack.planOptions = planOptions;
+            }
+
+            trackIndex += 1;
+            setTimeout(processNextTrack, 16);
+          } catch (error) {
+            showPlannerError(String(error));
+          }
+        }, 0);
+      };
+
+      setTimeout(processNextTrack, 50);
     }
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -110,7 +459,7 @@
         formatCount(dialogData.counts.notes, "note", "notes")
       ].join(" / ");
 
-      renderTracks();
+      startPlanner();
       nameInput.focus();
       nameInput.select();
 
@@ -140,7 +489,8 @@
     }
 
     input,
-    button {
+    button,
+    select {
       font: inherit;
     }
 
@@ -318,6 +668,95 @@
       scrollbar-width: thin;
     }
 
+    .loading-panel {
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--c-border);
+      background: var(--c-panel);
+      box-shadow: inset 0 1px 3px rgb(0 0 0 / 25%);
+    }
+
+    .loading-panel[hidden],
+    .track-list[hidden] {
+      display: none;
+    }
+
+    .loading-content {
+      width: min(430px, calc(100% - 32px));
+      display: grid;
+      gap: 10px;
+      padding: 20px;
+    }
+
+    .loading-visual {
+      height: 42px;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 3px;
+      align-items: end;
+    }
+
+    .loading-visual span {
+      height: 12px;
+      border: 1px solid var(--live-text-subtle);
+      background: var(--live-control);
+      animation: planner-pulse 1.2s ease-in-out infinite;
+    }
+
+    .loading-visual span:nth-child(3n + 2) {
+      height: 25px;
+      animation-delay: 100ms;
+    }
+
+    .loading-visual span:nth-child(3n) {
+      height: 36px;
+      animation-delay: 200ms;
+    }
+
+    .loading-title {
+      color: var(--c-text);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .loading-detail,
+    .loading-count {
+      color: var(--c-text-secondary);
+      line-height: 1.35;
+    }
+
+    .loading-progress {
+      height: 5px;
+      overflow: hidden;
+      border: 1px solid var(--c-border);
+      background: var(--c-input);
+    }
+
+    .loading-progress-fill {
+      width: 2%;
+      height: 100%;
+      background: var(--c-accent);
+      transition: width 180ms ease-out;
+    }
+
+    .loading-progress--error .loading-progress-fill {
+      width: 100% !important;
+      background: var(--c-ignored);
+    }
+
+    @keyframes planner-pulse {
+      0%,
+      100% {
+        background: var(--live-control);
+      }
+
+      50% {
+        border-color: var(--c-accent);
+        background: var(--c-accent);
+      }
+    }
+
     .track-row {
       min-height: 42px;
       display: grid;
@@ -353,10 +792,29 @@
       min-width: 0;
     }
 
+    .track-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
     .track-name {
+      min-width: 0;
       overflow-wrap: anywhere;
       font-weight: 600;
       color: var(--c-text);
+    }
+
+    .track-instrument {
+      flex: 0 0 auto;
+      padding: 1px 4px;
+      border: 1px solid var(--live-text-subtle);
+      border-radius: 2px;
+      color: var(--c-text-secondary);
+      font-size: 10px;
+      font-weight: 500;
+      white-space: nowrap;
     }
 
     .track-detail,
@@ -367,6 +825,39 @@
     .track-detail {
       margin-top: 2px;
       overflow-wrap: anywhere;
+    }
+
+    .track-planning {
+      display: flex;
+      gap: 5px;
+      margin-top: 5px;
+    }
+
+    .alx-select {
+      min-width: 0;
+      height: 21px;
+      padding: 0 20px 0 5px;
+      border: 1px solid var(--c-border);
+      border-radius: 2px;
+      outline: 0;
+      background: var(--c-control);
+      color: var(--c-text);
+    }
+
+    .alx-select:hover {
+      background: var(--c-control-hover);
+    }
+
+    .alx-select:focus {
+      border-color: var(--c-outline);
+    }
+
+    .instrument-select {
+      width: 136px;
+    }
+
+    .octave-select {
+      width: 116px;
     }
 
     .track-count {
@@ -449,6 +940,12 @@
       translate: 0 1px;
       box-shadow: none;
     }
+
+    .alx-button:disabled {
+      color: var(--c-text-secondary);
+      cursor: default;
+      opacity: 0.65;
+    }
   </style>
 </head>
 <body>
@@ -481,15 +978,41 @@
 
     <section class="tracks-section">
       <h2 class="section-heading">Arrangement MIDI tracks</h2>
-      <div class="track-list" id="track-list" role="list"></div>
+      <div class="loading-panel" id="loading-panel" role="status">
+        <div class="loading-content">
+          <div class="loading-visual" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <div class="loading-title" id="loading-title">
+            Preparing tablature
+          </div>
+          <div class="loading-detail" id="loading-detail">
+            Reading MIDI registers and testing standard instruments
+          </div>
+          <div class="loading-progress" id="loading-progress">
+            <div
+              class="loading-progress-fill"
+              id="loading-progress-fill"
+            ></div>
+          </div>
+          <div class="loading-count" id="loading-count">
+            Starting planner
+          </div>
+        </div>
+      </div>
+      <div class="track-list" id="track-list" role="list" hidden></div>
     </section>
 
     <footer>
       <button class="alx-button" id="cancel-button" type="button">Cancel</button>
       <button
         class="alx-button alx-button--primary"
+        id="export-button"
         type="submit"
         form="export-form"
+        disabled
       >
         Export
       </button>

@@ -1,0 +1,42 @@
+{
+  "song": {
+    "title": "Instrument Range Test",
+    "tempo": 120,
+    "timeSignature": {
+      "numerator": 4,
+      "denominator": 4
+    }
+  },
+  "tracks": [
+    {
+      "name": "Six String",
+      "kind": "guitar",
+      "tuning": [40, 45, 50, 55, 59, 64],
+      "notes": [
+        { "pitch": 40, "start": 0, "duration": 1, "velocity": 100 },
+        { "pitch": 64, "start": 1, "duration": 1, "velocity": 100 },
+        { "pitch": 100, "start": 2, "duration": 1, "velocity": 100 }
+      ]
+    },
+    {
+      "name": "Seven String",
+      "kind": "guitar7",
+      "tuning": [35, 40, 45, 50, 55, 59, 64],
+      "notes": [
+        { "pitch": 30, "start": 0, "duration": 1, "velocity": 100 },
+        { "pitch": 35, "start": 1, "duration": 1, "velocity": 100 },
+        { "pitch": 88, "start": 2, "duration": 1, "velocity": 100 }
+      ]
+    },
+    {
+      "name": "Four String Bass",
+      "kind": "bass",
+      "tuning": [28, 33, 38, 43],
+      "notes": [
+        { "pitch": 20, "start": 0, "duration": 1, "velocity": 100 },
+        { "pitch": 28, "start": 1, "duration": 1, "velocity": 100 },
+        { "pitch": 80, "start": 2, "duration": 1, "velocity": 100 }
+      ]
+    }
+  ]
+}

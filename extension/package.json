@@ -1,6 +1,6 @@
 {
   "name": "ableton-live-to-gp5",
-  "version": "1.3.4",
+  "version": "1.4.0",
   "main": "dist/extension.js",
   "engines": {
     "node": ">=24.14.1"
@@ -8,6 +8,10 @@
   "type": "module",
   "scripts": {
     "build:dev": "tsc --noEmit && tsx build.ts",
+    "test:planner": "tsx tests/export-planner.test.ts",
+    "test:browser-planner": "tsx tests/planner-browser.test.ts",
+    "test:converter": "python ../converter/test_ableton_to_gp5.py",
+    "test": "npm run test:planner && npm run test:browser-planner && npm run test:converter",
     "start": "npm run build:dev && extensions-cli run",
     "start:gp5": "npm run build:dev && extensions-cli run --storage-directory .runtime/storage --temp-directory .runtime/temp",
     "package:gp5": "npm run build:dev && extensions-cli package -i python -o dist/Ableton-Live-to-GP5.ablx"

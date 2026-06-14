@@ -1,7 +1,12 @@
 import { initialize } from "@ableton-extensions/sdk";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { buildExportData, buildExportDialogTracks } from "./export-data.js";
+import {
+  applyPreparedTracks,
+  applyTrackPlanningSelections,
+  buildExportData,
+  buildExportDialogTracks,
+} from "./export-data.js";
 import {
   showExportDialog,
   showExportResultDialog,
@@ -11,6 +16,7 @@ import {
   createVersionedExportPaths,
   materializeConverter,
   openOutputFolder,
+  readConversionReport,
   resolvePythonPath,
   runConverter,
   writeReport,
@@ -75,18 +81,33 @@ export const activate = async (activation: Activation) => {
         exportData,
         report
       );
-      const exportBaseName = await showExportDialog(
+      const dialogResult = await showExportDialog(
         context,
         EXPORT_BASE_NAME,
         dialogTracks,
         report
       );
 
-      if (!exportBaseName) {
+      if (!dialogResult) {
         console.log(`[${EXTENSION_ID}] export cancelled`);
         return;
       }
 
+      const exportBaseName = dialogResult.name;
+      const usedPreparedTracks = applyPreparedTracks(
+        exportData,
+        dialogResult.plannedTracks
+      );
+
+      if (!usedPreparedTracks) {
+        report.warnings.push(
+          "Prepared webview plans could not be validated; tracks were replanned before conversion."
+        );
+        applyTrackPlanningSelections(
+          exportData,
+          dialogResult.trackSelections
+        );
+      }
       report.exportBaseName = exportBaseName;
       exportData.song.title = exportBaseName;
 
@@ -100,6 +121,7 @@ export const activate = async (activation: Activation) => {
       reportPath = exportPaths.reportPath;
       report.outputJson = jsonPath;
       report.outputGp5 = gp5Path;
+      report.conversionReportPath = exportPaths.conversionReportPath;
 
       await fs.writeFile(
         jsonPath,
@@ -158,14 +180,50 @@ export const activate = async (activation: Activation) => {
 
       console.log(`[${EXTENSION_ID}] GP5 written: ${gp5Path}`);
 
+      let resultSummary = {
+        trackCount: exportData.tracks.length,
+        notesWritten: report.notesExported,
+        notesSkipped: 0,
+        verificationWarning: "Conversion report could not be verified.",
+      };
+
+      try {
+        const conversionReport = await readConversionReport(
+          exportPaths.conversionReportPath
+        );
+
+        report.notesWritten = conversionReport.notesWritten;
+        report.notesSkipped = conversionReport.notesSkipped;
+        resultSummary = {
+          trackCount: conversionReport.tracksWritten,
+          notesWritten: conversionReport.notesWritten,
+          notesSkipped: conversionReport.notesSkipped,
+          verificationWarning: "",
+        };
+
+        if (conversionReport.notesSkipped > 0) {
+          report.warnings.push(
+            `${conversionReport.notesSkipped} note(s) were not written to the GP5 file.`
+          );
+        }
+      } catch (conversionReportError) {
+        const message =
+          conversionReportError instanceof Error
+            ? conversionReportError.message
+            : String(conversionReportError);
+
+        report.warnings.push(
+          `GP5 was created, but its conversion report could not be verified: ${message}`
+        );
+      }
+
       let shouldOpenOutputFolder = true;
 
       try {
         shouldOpenOutputFolder = await showExportResultDialog(
           context,
           gp5Path,
-          exportData.tracks.length,
-          report.notesExported
+          resultSummary
         );
       } catch (dialogError) {
         const dialogMessage =

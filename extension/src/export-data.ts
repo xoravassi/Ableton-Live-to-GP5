@@ -4,29 +4,36 @@ import type {
   ExportReport,
   ExportTrack,
   FoundMidiClip,
+  TrackPlanningSelection,
 } from "./export-types.js";
+import { replanExportTracks } from "./export-planner.js";
 import { isMidiTrack } from "./midi-extraction.js";
 
-function inferTrackKind(name: string): "guitar" | "bass" {
-  const lower = name.toLowerCase();
-
-  if (
-    lower.includes("bass") ||
-    lower.includes("basse") ||
-    lower.includes("sub")
-  ) {
-    return "bass";
-  }
-
-  return "guitar";
-}
-
-function getTuning(kind: "guitar" | "bass"): number[] {
-  if (kind === "bass") {
-    return [28, 33, 38, 43];
-  }
-
-  return [40, 45, 50, 55, 59, 64];
+function createUnplannedTrack(name: string, muted: boolean): ExportTrack {
+  return {
+    name,
+    kind: "guitar",
+    tuning: [40, 45, 50, 55, 59, 64],
+    plan: {
+      kind: "guitar",
+      instrument: "6-string guitar - EADGBE",
+      tuning: [40, 45, 50, 55, 59, 64],
+      globalOctaveShift: 0,
+      metrics: {
+        unplaceableNotes: 0,
+        modifiedChords: 0,
+        totalAdjustedNotes: 0,
+        totalOctaveDistance: 0,
+        residualAdjustedNotes: 0,
+        residualOctaveDistance: 0,
+        adjustedDuration: 0,
+        octaveTransitionDistance: 0,
+        fretPositionCost: 0,
+      },
+    },
+    muted,
+    notes: [],
+  };
 }
 
 export function buildExportData(
@@ -38,16 +45,12 @@ export function buildExportData(
 
   for (const clip of clips) {
     const trackName = clip.trackName || clip.clipName;
-    const kind = inferTrackKind(trackName);
 
     if (!tracksByName.has(trackName)) {
-      tracksByName.set(trackName, {
-        name: trackName,
-        kind,
-        tuning: getTuning(kind),
-        muted: Boolean(clip.mutedInGp5),
-        notes: [],
-      });
+      tracksByName.set(
+        trackName,
+        createUnplannedTrack(trackName, Boolean(clip.mutedInGp5))
+      );
     }
 
     const targetTrack = tracksByName.get(trackName)!;
@@ -72,7 +75,9 @@ export function buildExportData(
     .filter((track) => track.notes.length > 0)
     .map((track) => ({
       ...track,
-      notes: track.notes.sort((a, b) => a.start - b.start || a.pitch - b.pitch),
+      notes: track.notes.sort(
+        (a, b) => a.start - b.start || a.pitch - b.pitch
+      ),
     }));
 
   report.clipsExported = clips.length;
@@ -139,12 +144,13 @@ export function buildExportDialogTracks(
 
       summaries.push({
         name,
+        planningTrack: exportedTrack,
         status: muted ? "muted" : "exported",
         clipCount: clipsByTrack.get(name) ?? 0,
         noteCount: exportedTrack.notes.length,
         detail: muted
-          ? "Exported with the track muted in Guitar Pro"
-          : "Exported to Guitar Pro",
+          ? "Track will be muted - preparing tablature plan"
+          : "Preparing tablature plan",
       });
       continue;
     }
@@ -173,4 +179,104 @@ export function buildExportDialogTracks(
   }
 
   return summaries;
+}
+
+export function applyTrackPlanningSelections(
+  exportData: ExportData,
+  selections: Record<string, TrackPlanningSelection>
+): void {
+  replanExportTracks(exportData.tracks, selections);
+}
+
+const STANDARD_TUNINGS: Record<ExportTrack["kind"], number[]> = {
+  guitar: [40, 45, 50, 55, 59, 64],
+  guitar7: [35, 40, 45, 50, 55, 59, 64],
+  bass: [28, 33, 38, 43],
+};
+
+function arraysEqual(left: number[], right: number[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+export function applyPreparedTracks(
+  exportData: ExportData,
+  preparedTracks: ExportTrack[]
+): boolean {
+  if (preparedTracks.length !== exportData.tracks.length) return false;
+
+  const preparedByName = new Map(
+    preparedTracks.map((track) => [track.name, track])
+  );
+  const validated: ExportTrack[] = [];
+
+  for (const original of exportData.tracks) {
+    const prepared = preparedByName.get(original.name);
+
+    if (!prepared || prepared.notes.length !== original.notes.length) {
+      return false;
+    }
+
+    const expectedTuning = STANDARD_TUNINGS[prepared.kind];
+
+    if (
+      !expectedTuning ||
+      prepared.plan?.kind !== prepared.kind ||
+      !arraysEqual(prepared.tuning, expectedTuning) ||
+      !arraysEqual(prepared.plan.tuning, expectedTuning)
+    ) {
+      return false;
+    }
+
+    for (let index = 0; index < original.notes.length; index += 1) {
+      const source = original.notes[index];
+      const planned = prepared.notes[index];
+
+      if (
+        planned.pitch !== source.pitch ||
+        planned.start !== source.start ||
+        planned.duration !== source.duration ||
+        planned.velocity !== source.velocity
+      ) {
+        return false;
+      }
+
+      if (planned.placementStatus === "placed") {
+        const stringsHighToLow = [...expectedTuning].reverse();
+
+        if (
+          !Number.isInteger(planned.adjustedPitch) ||
+          (planned.voice !== 0 && planned.voice !== 1) ||
+          !Number.isInteger(planned.string) ||
+          !Number.isInteger(planned.fret) ||
+          planned.string! < 1 ||
+          planned.string! > stringsHighToLow.length ||
+          planned.fret! < 0 ||
+          planned.fret! > 24 ||
+          stringsHighToLow[planned.string! - 1] + planned.fret! !==
+            planned.adjustedPitch ||
+          planned.adjustedPitch! - planned.pitch !==
+            12 * (planned.octaveShift ?? Number.NaN)
+        ) {
+          return false;
+        }
+      } else if (planned.placementStatus === "unplaceable") {
+        if (planned.string !== undefined || planned.fret !== undefined) {
+          return false;
+        }
+      } else {
+        return false;
+      }
+    }
+
+    validated.push({
+      ...prepared,
+      muted: original.muted,
+    });
+  }
+
+  exportData.tracks = validated;
+  return true;
 }

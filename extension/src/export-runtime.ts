@@ -3,7 +3,11 @@ import * as path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import converterSource from "../python/ableton_to_gp5.py";
-import type { ExportReport, VersionedExportPaths } from "./export-types.js";
+import type {
+  ConversionReport,
+  ExportReport,
+  VersionedExportPaths,
+} from "./export-types.js";
 
 const execFileAsync = promisify(execFile);
 const EXTENSION_ID = "ableton-live-to-gp5";
@@ -168,6 +172,33 @@ export async function runConverter(
   return execFileAsync(pythonPath, [converterPath, jsonPath, gp5Path], {
     cwd: storageDirectory,
   });
+}
+
+export async function readConversionReport(
+  reportPath: string
+): Promise<ConversionReport> {
+  const raw = await fs.readFile(reportPath, "utf-8");
+  const report = JSON.parse(raw) as Partial<ConversionReport>;
+  const numericFields = [
+    "tracksInput",
+    "tracksWritten",
+    "notesInput",
+    "notesWritten",
+    "notesSkipped",
+    "measuresWritten",
+  ] as const;
+
+  for (const field of numericFields) {
+    if (!Number.isFinite(report[field])) {
+      throw new Error(`Invalid conversion report field: ${field}`);
+    }
+  }
+
+  if (!Array.isArray(report.tracks) || !Array.isArray(report.warnings)) {
+    throw new Error("Invalid conversion report structure.");
+  }
+
+  return report as ConversionReport;
 }
 
 export async function openOutputFolder(

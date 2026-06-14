@@ -35,11 +35,40 @@
       document.getElementById("track-count").textContent =
         String(resultData.trackCount);
       document.getElementById("note-count").textContent =
-        String(resultData.noteCount);
+        String(resultData.notesWritten);
       document.getElementById("track-label").textContent =
         resultData.trackCount === 1 ? "track exported" : "tracks exported";
       document.getElementById("note-label").textContent =
-        resultData.noteCount === 1 ? "note exported" : "notes exported";
+        resultData.notesWritten === 1 ? "note written" : "notes written";
+
+      const hasWarnings =
+        resultData.notesSkipped > 0 || resultData.verificationWarning;
+
+      if (hasWarnings) {
+        const warning = document.getElementById("result-warning");
+        const details = [];
+
+        document.querySelector("h1").textContent =
+          "Export complete with warnings";
+        document.querySelector(".status-mark").classList.add(
+          "status-mark--warning"
+        );
+
+        if (resultData.notesSkipped > 0) {
+          details.push(
+            resultData.notesSkipped + " " +
+              (resultData.notesSkipped === 1 ? "note was" : "notes were") +
+              " not written"
+          );
+        }
+
+        if (resultData.verificationWarning) {
+          details.push(resultData.verificationWarning);
+        }
+
+        warning.textContent = details.join(". ") + ".";
+        warning.hidden = false;
+      }
 
       document.getElementById("close-button").addEventListener("click", () => {
         closeWithAction("close");
@@ -89,6 +118,7 @@
       --live-selection: #ffdd9f;
       --live-on-text: #040404;
       --live-play: #00d38d;
+      --live-alert: #e76942;
 
       --c-bg: var(--live-surface);
       --c-panel: var(--live-surface-area);
@@ -103,6 +133,7 @@
       --c-accent-hover: var(--live-accent-hover);
       --c-accent-text: var(--live-on-text);
       --c-success: var(--live-play);
+      --c-warning: var(--live-alert);
     }
 
     html,
@@ -145,6 +176,11 @@
       box-shadow: inset 0 0 0 2px var(--c-panel-raised);
     }
 
+    .status-mark--warning {
+      border-color: var(--c-warning);
+      background: var(--c-warning);
+    }
+
     h1 {
       font-size: 12px;
       font-weight: 600;
@@ -184,6 +220,14 @@
       border: 1px solid var(--c-border);
       background: var(--c-panel);
       box-shadow: inset 0 1px 3px rgb(0 0 0 / 25%);
+    }
+
+    .result-warning {
+      padding: 7px 9px;
+      border: 1px solid var(--c-warning);
+      color: var(--c-warning);
+      background: var(--c-panel);
+      line-height: 1.35;
     }
 
     .count {
@@ -281,6 +325,8 @@
           <div class="count-label" id="note-label"></div>
         </div>
       </div>
+
+      <div class="result-warning" id="result-warning" role="status" hidden></div>
     </section>
 
     <footer>
