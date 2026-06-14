@@ -15,6 +15,20 @@ function makeReport(): ExportReport {
     midiTracksSeen: 0,
     tracksIgnored: [],
     tracksMutedInGp5: [],
+    drumTracksDetected: 0,
+    drumNotesRecognized: 0,
+    drumNotesIgnored: 0,
+    drumNotesMerged: 0,
+    drumElements: {
+      kick: 0,
+      snare: 0,
+      "closed-hihat": 0,
+      "pedal-hihat": 0,
+      "open-hihat": 0,
+      ride: 0,
+      "ride-bell": 0,
+      crash: 0,
+    },
     clipsExported: 0,
     notesExported: 0,
     warnings: [],
@@ -320,6 +334,56 @@ function makeTrack(name: string, pitches: number[], simultaneous = false) {
 
   prepared.notes[0].fret = 99;
   assert.equal(applyPreparedTracks(rawData, [prepared]), false);
+}
+
+{
+  const report = makeReport();
+  const rawData = buildExportData(
+    { tempo: 120 },
+    [
+      {
+        clip: {},
+        clipName: "Drums",
+        trackName: "Drums",
+        startTime: 0,
+        kind: "drums",
+        notes: [
+          {
+            pitch: 48,
+            startTime: 0,
+            duration: 0.25,
+            velocity: 100,
+            drumElement: "kick",
+          },
+        ],
+      },
+      {
+        clip: {},
+        clipName: "Guitar",
+        trackName: "Guitar",
+        startTime: 0,
+        kind: "melodic",
+        notes: [
+          {
+            pitch: 64,
+            startTime: 0,
+            duration: 1,
+            velocity: 100,
+          },
+        ],
+      },
+    ],
+    report
+  );
+  const preparedGuitar = structuredClone(
+    rawData.tracks.find((track) => track.kind !== "drums")!
+  );
+
+  replanExportTracks([preparedGuitar]);
+  assert.equal(applyPreparedTracks(rawData, [preparedGuitar]), true);
+  assert.equal(rawData.tracks[0].kind, "drums");
+  assert.equal(rawData.tracks[0].notes[0].percussionValue, 36);
+  assert.equal(rawData.tracks[1].kind, "guitar");
 }
 
 console.log("export planner tests passed");

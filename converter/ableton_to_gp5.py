@@ -19,6 +19,27 @@ STANDARD_BASS_TUNING = [28, 33, 38, 43]  # E1 A1 D2 G2
 
 GUITAR_MIDI_INSTRUMENT = 25
 BASS_MIDI_INSTRUMENT = 33
+PERCUSSION_MIDI_CHANNEL = 9
+PERCUSSION_VALUES = {
+    "kick": 36,
+    "snare": 38,
+    "closed-hihat": 42,
+    "pedal-hihat": 44,
+    "open-hihat": 46,
+    "crash": 49,
+    "ride": 51,
+    "ride-bell": 53,
+}
+PERCUSSION_STRINGS = {
+    36: 5,
+    38: 6,
+    42: 1,
+    44: 1,
+    46: 1,
+    49: 3,
+    51: 2,
+    53: 2,
+}
 
 ALLOWED_DURATIONS = [
     gp.Duration.quarterTime * 4,       # ronde
@@ -171,6 +192,12 @@ def make_gp_strings(tuning_low_to_high: list[int]) -> list[gp.GuitarString]:
         for index, pitch in enumerate(high_to_low)
     ]
 
+def make_percussion_strings() -> list[gp.GuitarString]:
+    return [
+        gp.GuitarString(number=index + 1, value=0)
+        for index in range(7)
+    ]
+
 
 def fit_pitch_to_fretboard(pitch: int, track: gp.Track) -> tuple[int, int]:
     lowest_pitch = min(string.value for string in track.strings)
@@ -224,6 +251,77 @@ def make_note_beat(
         start=start_tick,
         status=gp.BeatStatus.normal,
     )
+
+    if track.isPercussionTrack:
+        used_values: set[int] = set()
+        used_strings: set[int] = set()
+
+        for note_data in notes:
+            element = str(note_data.get("drumElement", "")).lower()
+            percussion_value = PERCUSSION_VALUES.get(element)
+
+            if percussion_value is None:
+                try:
+                    candidate_value = int(note_data["percussionValue"])
+                except Exception:
+                    candidate_value = -1
+
+                if candidate_value in PERCUSSION_VALUES.values():
+                    percussion_value = candidate_value
+
+            if percussion_value is None:
+                track_report["notesSkipped"] += 1
+                track_report["warnings"].append(
+                    "Skipped drum note without a supported percussion value."
+                )
+                continue
+
+            if percussion_value in used_values:
+                track_report["duplicatesMerged"] += 1
+                continue
+
+            preferred_string = PERCUSSION_STRINGS.get(percussion_value, 1)
+            string_number = preferred_string
+
+            if string_number in used_strings:
+                string_number = next(
+                    (
+                        candidate
+                        for candidate in range(1, len(track.strings) + 1)
+                        if candidate not in used_strings
+                    ),
+                    0,
+                )
+
+            if string_number == 0:
+                track_report["notesSkipped"] += 1
+                track_report["warnings"].append(
+                    "Skipped drum note because no GP5 percussion slot was available."
+                )
+                continue
+
+            note = gp.Note(
+                beat=beat,
+                value=percussion_value,
+                velocity=clamp_velocity(
+                    note_data.get("velocity", gp.Velocities.default)
+                ),
+                string=string_number,
+                type=gp.NoteType.normal,
+            )
+
+            beat.notes.append(note)
+            used_values.add(percussion_value)
+            used_strings.add(string_number)
+            track_report["notesWritten"] += 1
+
+            if element in track_report["percussionElements"]:
+                track_report["percussionElements"][element] += 1
+
+        if not beat.notes:
+            beat.status = gp.BeatStatus.rest
+
+        return beat
 
     used_strings: set[int] = set()
 
@@ -587,8 +685,29 @@ def create_track_report(name: str, kind: str, muted: bool) -> dict[str, Any]:
         "octaveAdjustments": [],
         "unplaceablePitches": {},
         "plannedPositionErrors": [],
+        "percussionElements": {
+            "kick": 0,
+            "snare": 0,
+            "closed-hihat": 0,
+            "pedal-hihat": 0,
+            "open-hihat": 0,
+            "ride": 0,
+            "ride-bell": 0,
+            "crash": 0,
+        },
+        "duplicatesMerged": 0,
         "warnings": [],
     }
+
+
+def get_melodic_midi_channel(index: int) -> int:
+    port_index, channel_index = divmod(index, 15)
+    local_channel = (
+        channel_index
+        if channel_index < PERCUSSION_MIDI_CHANNEL
+        else channel_index + 1
+    )
+    return port_index * 16 + local_channel
 
 
 def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
@@ -633,6 +752,7 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
     )
 
     song.tracks = []
+    melodic_track_index = 0
 
     for index, source_track in enumerate(tracks_input, start=1):
         if not isinstance(source_track, dict):
@@ -641,6 +761,7 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
 
         name = str(source_track.get("name", f"Track {index}"))
         kind = str(source_track.get("kind", "guitar"))
+        is_drums = kind.lower() == "drums"
         muted = bool(source_track.get("muted", False))
 
         source_notes = source_track.get("notes", [])
@@ -674,23 +795,37 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
             except Exception:
                 continue
 
-        tuning = infer_default_tuning(kind)
+        tuning = [] if is_drums else infer_default_tuning(kind)
 
-        track_report["effectiveTuning"] = tuning
+        track_report["effectiveTuning"] = (
+            [0] * 7 if is_drums else tuning
+        )
 
         fret_count = DEFAULT_FRET_COUNT
 
-        gp_strings = make_gp_strings(tuning)
-
-        midi_instrument = (
-            BASS_MIDI_INSTRUMENT
-            if kind.lower() == "bass"
-            else GUITAR_MIDI_INSTRUMENT
+        gp_strings = (
+            make_percussion_strings()
+            if is_drums
+            else make_gp_strings(tuning)
         )
 
+        if is_drums:
+            midi_channel_number = PERCUSSION_MIDI_CHANNEL
+            midi_instrument = 0
+        else:
+            midi_channel_number = get_melodic_midi_channel(
+                melodic_track_index
+            )
+            melodic_track_index += 1
+            midi_instrument = (
+                BASS_MIDI_INSTRUMENT
+                if kind.lower() == "bass"
+                else GUITAR_MIDI_INSTRUMENT
+            )
+
         midi_channel = gp.MidiChannel(
-            channel=(index - 1) % 16,
-            effectChannel=(index - 1) % 16,
+            channel=midi_channel_number,
+            effectChannel=midi_channel_number,
             instrument=midi_instrument,
         )
 
@@ -698,7 +833,7 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
             midi_channel.volume = 0
 
         track_settings = gp.TrackSettings(
-            tablature=True,
+            tablature=not is_drums,
             notation=True,
         )
 
@@ -708,9 +843,11 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
             name=name,
             strings=gp_strings,
             channel=midi_channel,
+            port=midi_channel_number // 16 + 1,
             clefTranspose=12 if kind.lower() == "bass" else 0,
             fretCount=fret_count,
             settings=track_settings,
+            isPercussionTrack=is_drums,
         )
 
         build_track_measures(
@@ -739,6 +876,12 @@ def build_song(data: dict[str, Any], report: dict[str, Any]) -> gp.Song:
             track_report["warnings"].append(
                 f"{track_report['octaveAdjustedNotes']} note(s) were moved by "
                 "octaves to fit the tablature."
+            )
+
+        if track_report["duplicatesMerged"] > 0:
+            track_report["warnings"].append(
+                f"{track_report['duplicatesMerged']} duplicate drum hit(s) "
+                "were merged after quantization."
             )
 
         report["notesInput"] += track_report["notesInput"]

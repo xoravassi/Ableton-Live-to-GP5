@@ -33,8 +33,8 @@ python -c "import guitarpro; print(guitarpro.__file__)"
 1. Open a Live Set containing MIDI clips in the Arrangement View.
 2. Right-click a MIDI clip or MIDI track.
 3. Select **Convert to GP5**.
-4. Review the detected instrument and octave for each track, then enter the
-   export name.
+4. Review the detected stringed instruments, octave corrections and drum
+   mappings, then enter the export name.
 5. Click **Export**.
 
 The export window opens before tablature planning begins. A preparation view
@@ -60,9 +60,26 @@ conversion.
 - Looped clips are expanded to their Arrangement duration.
 - Explicitly muted tracks and clips are ignored.
 - Tracks muted only by Ableton's solo state are still exported.
-- Drum and percussion tracks are preserved but muted in Guitar Pro.
+- Detected drum elements are exported as real Guitar Pro percussion tracks
+  instead of muted guitar tablatures.
+- Drum Rack pads are matched from their receiving MIDI note to the sample
+  loaded in Simpler. Detection prioritizes the sample filename, then device,
+  clip and Ableton track names.
+- Kick names such as `kick`, `bd` and `bass drum` map to General MIDI 36.
+  Snare names such as `snare`, `snr` and `sd` map to General MIDI 38.
+- Hi-hats preserve their articulation when the sample name is explicit:
+  closed `42`, pedal/foot `44`, and open `46`. An ambiguous `hihat`, `hat` or
+  `HH` is treated as closed.
+- Ride maps to `51`, ride bell to `53`, and crash cymbal to `49`.
+- Standard General MIDI pitches for all supported elements are used as a final
+  fallback, but only after the track has already been identified as
+  percussion.
+- Duplicate hits of the same drum element on the same exported time grid are
+  merged. Unrecognized percussion elements are reported and omitted rather
+  than exported as an incorrect instrument.
 - Every track uses one standardized instrument: 6-string guitar in E standard,
-  7-string guitar in B standard, or 4-string bass in E standard.
+  7-string guitar in B standard, 4-string bass in E standard, or a GP5
+  percussion kit.
 - The planner simulates all three instruments and global octave offsets. It
   prioritizes preserving every note, keeping chords in one octave, minimizing
   individual corrections, and producing practical fret positions.
@@ -79,9 +96,15 @@ conversion.
 
 ## Limitations
 
-- Rhythm conversion is intentionally approximate.
+- MIDI note positions and durations are quantized to the nearest 1/32 note.
+  Tuplets, groove and complex overlaps are not preserved exactly.
 - Complex tuplets, articulations, automation and MPE are not exported.
-- Drum tracks are not converted to Guitar Pro percussion notation.
+- Drum conversion currently recognizes kick, snare, closed/pedal/open hi-hat,
+  ride, ride bell and crash. Claps, toms and other percussion elements are
+  reported but not yet written.
+- Simpler sample paths and Drum Rack chains are supported by the current Live
+  Extensions SDK. Sampler and third-party plug-ins may expose only a device,
+  clip or track name, so detection can be less precise for those devices.
 - The extension does not receive the Live Set filename from the current SDK,
   so the export name is entered manually.
 
@@ -98,6 +121,12 @@ Build the installable package:
 
 ```powershell
 npm --prefix extension run package:gp5
+```
+
+Run the planner, Ableton extraction and converter tests:
+
+```powershell
+npm --prefix extension test
 ```
 
 Output:

@@ -369,7 +369,9 @@
 
         const status = document.createElement("div");
         status.className = "track-status track-status--" + track.status;
-        status.textContent = statusLabels[track.status];
+        status.textContent = track.drumSummary
+          ? "Drums"
+          : statusLabels[track.status];
 
         const count = document.createElement("div");
         count.className = "track-count";

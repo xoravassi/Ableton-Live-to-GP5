@@ -1,0 +1,109 @@
+{
+  "song": {
+    "title": "Drum kit test",
+    "tempo": 120,
+    "timeSignature": {
+      "numerator": 4,
+      "denominator": 4
+    }
+  },
+  "tracks": [
+    {
+      "name": "Main drums",
+      "kind": "drums",
+      "tuning": [],
+      "notes": [
+        {
+          "pitch": 48,
+          "drumElement": "kick",
+          "percussionValue": 36,
+          "drumSourceName": "KICK_909.wav",
+          "start": 0,
+          "duration": 0.25,
+          "velocity": 110
+        },
+        {
+          "pitch": 49,
+          "drumElement": "snare",
+          "percussionValue": 38,
+          "drumSourceName": "SNARE_tight.wav",
+          "start": 1,
+          "duration": 0.25,
+          "velocity": 105
+        },
+        {
+          "pitch": 48,
+          "drumElement": "kick",
+          "percussionValue": 36,
+          "drumSourceName": "KICK_909.wav",
+          "start": 2,
+          "duration": 0.25,
+          "velocity": 108
+        },
+        {
+          "pitch": 49,
+          "drumElement": "snare",
+          "percussionValue": 38,
+          "drumSourceName": "SNARE_tight.wav",
+          "start": 3,
+          "duration": 0.25,
+          "velocity": 103
+        },
+        {
+          "pitch": 50,
+          "drumElement": "closed-hihat",
+          "percussionValue": 42,
+          "drumSourceName": "CHH_909.wav",
+          "start": 0,
+          "duration": 0.25,
+          "velocity": 95
+        },
+        {
+          "pitch": 51,
+          "drumElement": "open-hihat",
+          "percussionValue": 46,
+          "drumSourceName": "Open_HiHat.wav",
+          "start": 0.5,
+          "duration": 0.25,
+          "velocity": 95
+        },
+        {
+          "pitch": 52,
+          "drumElement": "pedal-hihat",
+          "percussionValue": 44,
+          "drumSourceName": "Pedal_Hat.wav",
+          "start": 1.5,
+          "duration": 0.25,
+          "velocity": 90
+        },
+        {
+          "pitch": 53,
+          "drumElement": "ride",
+          "percussionValue": 51,
+          "drumSourceName": "Ride_Cymbal.wav",
+          "start": 2,
+          "duration": 0.25,
+          "velocity": 100
+        },
+        {
+          "pitch": 54,
+          "drumElement": "ride-bell",
+          "percussionValue": 53,
+          "drumSourceName": "Ride_Bell.wav",
+          "start": 2.5,
+          "duration": 0.25,
+          "velocity": 105
+        },
+        {
+          "pitch": 55,
+          "drumElement": "crash",
+          "percussionValue": 49,
+          "drumSourceName": "Crash_02.wav",
+          "start": 3,
+          "duration": 0.25,
+          "velocity": 110
+        }
+      ]
+    }
+  ]
+}

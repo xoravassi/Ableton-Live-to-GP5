@@ -3,6 +3,7 @@ import type {
   ExportTrackKind,
   ExportTrackNote,
   ExportTrackPlan,
+  StringedTrackKind,
   TrackPlanMetrics,
   TrackPlanOption,
   TrackPlanningSelection,
@@ -14,7 +15,7 @@ const RESIDUAL_OCTAVE_SHIFTS = [-4, -3, -2, -1, 0, 1, 2, 3, 4];
 const START_GRID_PER_BEAT = 8;
 
 type InstrumentDefinition = {
-  kind: ExportTrackKind;
+  kind: StringedTrackKind;
   label: string;
   tuning: number[];
   preference: number;
@@ -670,7 +671,7 @@ function planEvents(
   };
 }
 
-function trackNameHint(name: string): ExportTrackKind | null {
+function trackNameHint(name: string): StringedTrackKind | null {
   const lower = name.toLowerCase();
 
   if (/(^|[^a-z0-9])(bass|basse|sub)([^a-z0-9]|$)/.test(lower)) {
@@ -688,7 +689,7 @@ function trackNameHint(name: string): ExportTrackKind | null {
   return null;
 }
 
-function inferPreferredKind(track: ExportTrack): ExportTrackKind {
+function inferPreferredKind(track: ExportTrack): StringedTrackKind {
   const nameHint = trackNameHint(track.name);
 
   if (nameHint) return nameHint;
@@ -716,7 +717,7 @@ function fullCandidateComparison(
   candidate: PlannedTrackCandidate,
   track: ExportTrack,
   instrument: InstrumentDefinition,
-  preferredKind: ExportTrackKind
+  preferredKind: StringedTrackKind
 ): number[] {
   const metrics = candidate.plan.metrics;
 
@@ -741,7 +742,7 @@ function createCandidate(
   track: ExportTrack,
   instrument: InstrumentDefinition,
   globalOctaveShift: number,
-  preferredKind: ExportTrackKind
+  preferredKind: StringedTrackKind
 ): PlannedTrackCandidate {
   const eventPlan = planEvents(track.notes, instrument, globalOctaveShift);
   const plan: ExportTrackPlan = {
@@ -869,6 +870,8 @@ export function planTrack(
   track: ExportTrack,
   selection?: TrackPlanningSelection
 ): TrackPlanOption[] {
+  if (track.kind === "drums") return [];
+
   const { candidates, recommended } = analyzeTrack(track);
   const selected = chooseCandidate(candidates, selection);
   const bestKeysByKind = new Map<ExportTrackKind, string>();
@@ -915,6 +918,11 @@ export function replanExportTracks(
   const options = new Map<string, TrackPlanOption[]>();
 
   for (const track of tracks) {
+    if (track.kind === "drums") {
+      options.set(track.name, []);
+      continue;
+    }
+
     options.set(track.name, planTrack(track, selections[track.name]));
   }
 

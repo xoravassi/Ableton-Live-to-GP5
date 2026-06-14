@@ -1,3 +1,14 @@
+export type DrumElement =
+  | "kick"
+  | "snare"
+  | "closed-hihat"
+  | "pedal-hihat"
+  | "open-hihat"
+  | "ride"
+  | "ride-bell"
+  | "crash";
+export type DrumDetection = DrumElement | "unrecognized";
+
 export type AbletonMidiNote = {
   id?: number;
   pitch: number;
@@ -7,6 +18,8 @@ export type AbletonMidiNote = {
   muted?: boolean;
   probability?: number;
   velocityDeviation?: number;
+  drumElement?: DrumDetection;
+  drumSourceName?: string;
 };
 
 export type FoundMidiClip = {
@@ -16,9 +29,11 @@ export type FoundMidiClip = {
   startTime: number;
   notes: AbletonMidiNote[];
   mutedInGp5?: boolean;
+  kind?: "melodic" | "drums";
 };
 
-export type ExportTrackKind = "guitar" | "guitar7" | "bass";
+export type StringedTrackKind = "guitar" | "guitar7" | "bass";
+export type ExportTrackKind = StringedTrackKind | "drums";
 
 export type ExportTrackNote = {
   pitch: number;
@@ -31,6 +46,9 @@ export type ExportTrackNote = {
   start: number;
   duration: number;
   velocity: number;
+  drumElement?: DrumElement;
+  percussionValue?: number;
+  drumSourceName?: string;
 };
 
 export type TrackPlanMetrics = {
@@ -93,6 +111,11 @@ export type ExportReport = {
   midiTracksSeen: number;
   tracksIgnored: { name: string; reason: string }[];
   tracksMutedInGp5: { name: string; reason: string }[];
+  drumTracksDetected: number;
+  drumNotesRecognized: number;
+  drumNotesIgnored: number;
+  drumNotesMerged: number;
+  drumElements: Record<DrumElement, number>;
   clipsExported: number;
   notesExported: number;
   notesWritten?: number;
@@ -144,6 +167,15 @@ export type VersionedExportPaths = {
 export type ExportDialogTrack = {
   name: string;
   planningTrack?: ExportTrack;
+  instrument?: string;
+  drumSummary?: {
+    kick: number;
+    snare: number;
+    hihat: number;
+    ride: number;
+    crash: number;
+    unrecognized: number;
+  };
   status: "exported" | "muted" | "ignored" | "empty";
   clipCount: number;
   noteCount: number;
@@ -151,7 +183,7 @@ export type ExportDialogTrack = {
 };
 
 export type TrackPlanningSelection = {
-  kind: "auto" | ExportTrackKind;
+  kind: "auto" | StringedTrackKind;
   globalOctaveShift: "auto" | number;
 };
 
